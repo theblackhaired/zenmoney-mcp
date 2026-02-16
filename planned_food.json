@@ -1,0 +1,46 @@
+{
+  "total": 50000,
+  "count": 5,
+  "items": [
+    {
+      "date": "2026-03-12",
+      "amount": 10000,
+      "categories": [
+        "Доставка еды"
+      ],
+      "payee": "GrowFood"
+    },
+    {
+      "date": "2026-03-06",
+      "amount": 10000,
+      "categories": [
+        "Доставка еды"
+      ],
+      "payee": "GrowFood"
+    },
+    {
+      "date": "2026-02-22",
+      "amount": 10000,
+      "categories": [
+        "Доставка еды"
+      ],
+      "payee": "GrowFood"
+    },
+    {
+      "date": "2026-03-18",
+      "amount": 10000,
+      "categories": [
+        "Доставка еды"
+      ],
+      "payee": "GrowFood"
+    },
+    {
+      "date": "2026-02-28",
+      "amount": 10000,
+      "categories": [
+        "Доставка еды"
+      ],
+      "payee": "GrowFood"
+    }
+  ]
+}

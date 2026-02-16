@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server that provides Claude Code with full acces
 
 ## Features
 
-**19 Tools** for complete personal finance management:
+**22 Tools** for complete personal finance management:
 
 **Read Tools:**
 - `get_accounts` - View all accounts with balances and currency information
@@ -25,6 +25,9 @@ An MCP (Model Context Protocol) server that provides Claude Code with full acces
 - `update_reminder` - Modify existing reminders
 - `delete_reminder` - Remove recurring reminders
 - `delete_reminder_marker` - Remove one-time reminder markers
+- `create_budget` - Create or update budget limits for categories
+- `update_budget` - Modify existing budget limits
+- `delete_budget` - Remove budget limits
 
 **Analytics:**
 - `get_analytics` - Analyze spending by category, account, or merchant for any date range
@@ -372,6 +375,70 @@ Delete a one-time reminder marker (разовое напоминание).
 - Confirmation of deletion
 
 **Note:** This sets the marker state to 'deleted', removing it from planned transactions.
+
+### create_budget
+
+Create or update a budget limit for a category in a specific month.
+
+**Parameters:**
+- `month` (string, required) - Month in yyyy-MM format (e.g., "2026-03")
+- `category` (string, required) - Category name or UUID. Use "ALL" for aggregate budget across all categories
+- `income` (number, optional) - Income budget limit. Default: 0
+- `outcome` (number, optional) - Outcome budget limit (spending limit). Default: 0
+- `income_lock` (boolean, optional) - Lock income budget (prevent auto-changes). Default: false
+- `outcome_lock` (boolean, optional) - Lock outcome budget (prevent auto-changes). Default: false
+
+**Returns:**
+- Created/updated budget with limits
+
+**Examples:**
+```
+# Set spending limit of 10,000₽ on "Продукты" for March
+create_budget(month="2026-03", category="Продукты", outcome=10000)
+
+# Set income expectation of 240,000₽ on "Зарплата" for March
+create_budget(month="2026-03", category="Зарплата", income=240000)
+
+# Set aggregate budget across all categories
+create_budget(month="2026-03", category="ALL", outcome=150000)
+```
+
+### update_budget
+
+Update existing budget limits. Only provide fields you want to change.
+
+**Parameters:**
+- `month` (string, required) - Month in yyyy-MM format
+- `category` (string, required) - Category name or UUID, or "ALL" for aggregate
+- `income` (number, optional) - New income budget limit
+- `outcome` (number, optional) - New outcome budget limit
+- `income_lock` (boolean, optional) - New income lock state
+- `outcome_lock` (boolean, optional) - New outcome lock state
+
+**Returns:**
+- Updated budget confirmation
+
+**Example:**
+```
+# Increase spending limit on "Продукты" from 10k to 15k
+update_budget(month="2026-03", category="Продукты", outcome=15000)
+```
+
+### delete_budget
+
+Delete a budget limit by setting both income and outcome to 0.
+
+**Parameters:**
+- `month` (string, required) - Month in yyyy-MM format
+- `category` (string, required) - Category name or UUID, or "ALL" for aggregate
+
+**Returns:**
+- Confirmation of deletion
+
+**Example:**
+```
+delete_budget(month="2026-03", category="Продукты")
+```
 
 ### get_categories
 
