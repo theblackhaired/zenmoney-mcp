@@ -2,7 +2,7 @@ import { z } from 'zod';
 import crypto from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataCache } from '../utils/cache.js';
-import type { Reminder, ReminderMarker } from '../api/types.js';
+import type { Reminder, ReminderMarker, Deletion } from '../api/types.js';
 import { validateDate, validateUUID, validatePositiveNumber, todayString } from '../utils/validation.js';
 
 export function registerReminderWriteTools(server: McpServer, cache: DataCache): void {
@@ -214,13 +214,12 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
   // DELETE REMINDER
   server.tool(
     'delete_reminder',
-    'Delete a reminder (soft-delete).',
+    'Delete a reminder and all its associated markers.',
     {
       id: z.string().describe('Reminder UUID to delete'),
     },
     async ({ id }) => {
       validateUUID(id, 'id');
-
       await cache.ensureInitialized();
 
       const existing = cache.reminders.get(id);
@@ -228,15 +227,31 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
         throw new Error(`Reminder not found: ${id}`);
       }
 
-      // Soft delete: set endDate to past
-      const deleted: Reminder = {
-        ...existing,
-        changed: Math.floor(Date.now() / 1000),
-        endDate: '2000-01-01', // Past date to stop reminder
-      };
+      const now = Math.floor(Date.now() / 1000);
+      const deletions: Deletion[] = [];
+
+      // Delete the reminder itself
+      deletions.push({
+        id,
+        object: 'reminder',
+        stamp: now,
+        user: existing.user,
+      });
+
+      // Find and delete all markers for this reminder
+      for (const [markerId, marker] of cache.reminderMarkers) {
+        if (marker.reminder === id) {
+          deletions.push({
+            id: markerId,
+            object: 'reminderMarker',
+            stamp: now,
+            user: marker.user,
+          });
+        }
+      }
 
       await cache.writeDiff({
-        reminder: [deleted],
+        deletion: deletions,
       });
 
       return {
@@ -244,7 +259,7 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
           type: 'text',
           text: JSON.stringify({
             success: true,
-            message: 'Reminder deleted',
+            message: `Reminder deleted with ${deletions.length - 1} associated markers`,
             id,
           }, null, 2)
         }]
@@ -397,30 +412,26 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
   // DELETE REMINDER MARKER (удаление разового напоминания)
   server.tool(
     'delete_reminder_marker',
-    'Delete a reminder marker (разовое напоминание). Soft-delete by setting state to deleted.',
+    'Delete a reminder marker (разовое напоминание).',
     {
       id: z.string().describe('ReminderMarker UUID to delete'),
     },
     async ({ id }) => {
       validateUUID(id, 'id');
-
       await cache.ensureInitialized();
 
-      // Find the marker
       const marker = cache.reminderMarkers.get(id);
       if (!marker) {
         throw new Error(`ReminderMarker not found: ${id}`);
       }
 
-      // Soft-delete by setting state to 'deleted'
-      const deletedMarker: ReminderMarker = {
-        ...marker,
-        changed: Math.floor(Date.now() / 1000),
-        state: 'deleted',
-      };
-
       await cache.writeDiff({
-        reminderMarker: [deletedMarker],
+        deletion: [{
+          id,
+          object: 'reminderMarker',
+          stamp: Math.floor(Date.now() / 1000),
+          user: marker.user,
+        }],
       });
 
       return {
