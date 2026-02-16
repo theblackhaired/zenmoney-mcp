@@ -2,7 +2,7 @@ import { z } from 'zod';
 import crypto from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataCache } from '../utils/cache.js';
-import type { Reminder } from '../api/types.js';
+import type { Reminder, ReminderMarker } from '../api/types.js';
 import { validateDate, validateUUID, validatePositiveNumber, todayString } from '../utils/validation.js';
 
 export function registerReminderWriteTools(server: McpServer, cache: DataCache): void {
@@ -246,6 +246,148 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
             success: true,
             message: 'Reminder deleted',
             id,
+          }, null, 2)
+        }]
+      };
+    }
+  );
+
+  // CREATE REMINDER MARKER (разовое напоминание)
+  server.tool(
+    'create_reminder_marker',
+    'Create a one-time reminder marker (разовое напоминание) for a specific date. Perfect for salary/payments that vary each month.',
+    {
+      type: z.enum(['expense', 'income', 'transfer']).describe('Transaction type'),
+      amount: z.number().positive().describe('Transaction amount (positive number)'),
+      account_id: z.string().describe('Account UUID. For expense: source account. For income: destination account.'),
+      to_account_id: z.string().optional().describe('Destination account UUID (required for transfers)'),
+      category_ids: z.array(z.string()).optional().describe('Category UUIDs'),
+      payee: z.string().optional().describe('Payee name'),
+      comment: z.string().optional().describe('Comment/note'),
+      date: z.string().describe('Date when this transaction should occur (yyyy-MM-dd)'),
+      reminder_id: z.string().optional().describe('Optional: link to existing Reminder. If not provided, creates a one-time Reminder automatically.'),
+      notify: z.boolean().optional().default(true).describe('Enable notifications. Default: true'),
+    },
+    async ({ type, amount, account_id, to_account_id, category_ids, payee, comment, date, reminder_id, notify }) => {
+      validateUUID(account_id, 'account_id');
+      if (to_account_id) validateUUID(to_account_id, 'to_account_id');
+      if (category_ids) category_ids.forEach(id => validateUUID(id, 'category_id'));
+      if (reminder_id) validateUUID(reminder_id, 'reminder_id');
+      validateDate(date, 'date');
+      validatePositiveNumber(amount, 'amount');
+
+      if (type === 'transfer' && !to_account_id) {
+        throw new Error('to_account_id is required for transfer type');
+      }
+
+      await cache.ensureInitialized();
+
+      // Get account details for currency
+      const account = cache.accounts.get(account_id);
+      if (!account) {
+        throw new Error(`Account not found: ${account_id}`);
+      }
+
+      const toAccount = to_account_id ? cache.accounts.get(to_account_id) : null;
+      if (to_account_id && !toAccount) {
+        throw new Error(`Destination account not found: ${to_account_id}`);
+      }
+
+      // Validate category IDs
+      if (category_ids) {
+        for (const catId of category_ids) {
+          if (!cache.tags.has(catId)) {
+            throw new Error(`Category not found: ${catId}`);
+          }
+        }
+      }
+
+      const userId = account.user;
+      const now = Math.floor(Date.now() / 1000);
+
+      // If no reminder_id provided, create a one-time Reminder with interval: null
+      let effectiveReminderId = reminder_id;
+      if (!effectiveReminderId) {
+        const oneTimeReminder: Reminder = {
+          id: crypto.randomUUID(),
+          user: userId,
+          changed: now,
+          incomeInstrument: type === 'income' ? account.instrument : (toAccount?.instrument ?? account.instrument),
+          incomeAccount: type === 'income' ? account_id : (to_account_id ?? account_id),
+          income: type === 'expense' ? 0 : amount,
+          outcomeInstrument: type === 'income' ? account.instrument : account.instrument,
+          outcomeAccount: type === 'income' ? account_id : account_id,
+          outcome: type === 'income' ? 0 : amount,
+          tag: category_ids ?? null,
+          merchant: null,
+          payee: payee ?? null,
+          comment: comment ?? null,
+          interval: null, // One-time reminder
+          step: null,
+          points: null,
+          startDate: date,
+          endDate: date,
+          notify: notify ?? true,
+        };
+
+        await cache.writeDiff({ reminder: [oneTimeReminder] });
+        effectiveReminderId = oneTimeReminder.id;
+      }
+
+      // Validate reminder exists
+      const reminder = cache.reminders.get(effectiveReminderId);
+      if (!reminder) {
+        throw new Error(`Reminder not found: ${effectiveReminderId}`);
+      }
+
+      // Create ReminderMarker
+      const marker: ReminderMarker = {
+        id: crypto.randomUUID(),
+        user: userId,
+        changed: now,
+
+        // Transaction spec
+        incomeInstrument: type === 'income' ? account.instrument : (toAccount?.instrument ?? account.instrument),
+        incomeAccount: type === 'income' ? account_id : (to_account_id ?? account_id),
+        income: type === 'expense' ? 0 : amount,
+        outcomeInstrument: type === 'income' ? account.instrument : account.instrument,
+        outcomeAccount: type === 'income' ? account_id : account_id,
+        outcome: type === 'income' ? 0 : amount,
+
+        // Metadata
+        tag: category_ids ?? null,
+        merchant: null,
+        payee: payee ?? null,
+        comment: comment ?? null,
+
+        // Marker-specific
+        date,
+        reminder: effectiveReminderId,
+        state: 'planned',
+        notify: notify ?? true,
+      };
+
+      // Write to ZenMoney
+      await cache.writeDiff({
+        reminderMarker: [marker],
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            reminder_marker: {
+              id: marker.id,
+              type,
+              amount,
+              account: account.title,
+              to_account: toAccount?.title,
+              date,
+              state: 'planned',
+              reminder_id: effectiveReminderId,
+              auto_created_reminder: !reminder_id,
+            }
           }, null, 2)
         }]
       };

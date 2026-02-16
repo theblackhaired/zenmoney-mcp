@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server that provides Claude Code with full acces
 
 ## Features
 
-**17 Tools** for complete personal finance management:
+**18 Tools** for complete personal finance management:
 
 **Read Tools:**
 - `get_accounts` - View all accounts with balances and currency information
@@ -21,6 +21,7 @@ An MCP (Model Context Protocol) server that provides Claude Code with full acces
 - `delete_transaction` - Remove transactions
 - `create_account` - Add new accounts (cash, cards, checking)
 - `create_reminder` - Create recurring scheduled transactions (expenses, income, transfers)
+- `create_reminder_marker` - Create one-time reminders (perfect for varying monthly payments)
 - `update_reminder` - Modify existing reminders
 - `delete_reminder` - Remove planned transactions
 
@@ -300,6 +301,35 @@ Create a new recurring reminder (планируемая транзакция) fo
 - Monthly rent: `interval='month', step=1, points=[1]` (every 1st day)
 - Bi-weekly salary: `interval='week', step=2` (every 2 weeks)
 - Quarterly payment: `interval='month', step=3` (every 3 months)
+
+### create_reminder_marker
+
+Create a one-time reminder marker for a specific date. **Perfect for varying monthly payments** like salary (where amount differs each month based on working days, vacations, etc.).
+
+**Parameters:**
+- `type` (string, required) - 'expense', 'income', or 'transfer'
+- `amount` (number, required) - Transaction amount (positive number)
+- `account_id` (string, required) - Source/destination account UUID
+- `to_account_id` (string, optional) - Required for transfers
+- `category_ids` (array, optional) - Category UUIDs to apply
+- `payee` (string, optional) - Merchant/payee name
+- `comment` (string, optional) - Additional notes (e.g., "Зарплата март")
+- `date` (string, required) - Date when this transaction should occur (yyyy-MM-dd)
+- `reminder_id` (string, optional) - Link to existing Reminder. If not provided, creates a one-time Reminder automatically
+- `notify` (boolean, optional) - Enable notifications. Default: true
+
+**Returns:**
+- Created reminder marker with state 'planned'
+- Auto-created Reminder ID if reminder_id was not provided
+
+**Use Case - Varying Monthly Salary:**
+```
+Month 1: create_reminder_marker(amount=240000, date="2026-03-05", comment="Зарплата март")
+Month 2: create_reminder_marker(amount=199000, date="2026-04-05", comment="Зарплата апрель (с отпуском)")
+Month 3: create_reminder_marker(amount=241000, date="2026-05-05", comment="Зарплата май")
+```
+
+Each reminder is independent with its own amount, perfect for salaries that vary based on working days or absences.
 
 ### update_reminder
 
