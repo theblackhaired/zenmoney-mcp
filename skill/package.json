@@ -1,0 +1,8 @@
+{
+  "name": "skill-zenmoney",
+  "version": "1.0.0",
+  "description": "Claude Code skill wrapper for ZenMoney MCP server",
+  "scripts": {
+    "setup": "pip install mcp"
+  }
+}
