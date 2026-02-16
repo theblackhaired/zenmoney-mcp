@@ -1,0 +1,554 @@
+[
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 15539,
+    "fromAccount": "ЦИFРА",
+    "toAccount": "Freedom Finance",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 15539,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "ЦИFРА",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 16300,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "ЦИFРА",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 100,
+    "fromAccount": "Яндекс",
+    "toAccount": "Яндекс",
+    "payee": "Алиса Про",
+    "comment": null,
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 9000,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "Яндекс",
+    "payee": null,
+    "comment": "На погашение сплита",
+    "categories": []
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 1000,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "Райффайзенбанк ",
+    "payee": null,
+    "comment": "Оплата подписок",
+    "categories": []
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 2500,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "ВТБ ₽",
+    "payee": null,
+    "comment": "Проезд на общественном транспорте",
+    "categories": []
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 16300,
+    "fromAccount": "ЦИFРА",
+    "toAccount": "Freedom Finance",
+    "payee": null,
+    "comment": "На оплату зарубежных сервисов",
+    "categories": []
+  },
+  {
+    "date": "2026-02-20",
+    "type": "transfer",
+    "amount": 15000,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "Обязательные платежи",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-02-22",
+    "type": "transfer",
+    "amount": 10000,
+    "fromAccount": "Кредитка \"Альфа-Банк\"",
+    "toAccount": "Кредитка \"Альфа-Банк\"",
+    "payee": "GrowFood",
+    "comment": null,
+    "categories": [
+      "Доставка еды"
+    ]
+  },
+  {
+    "date": "2026-02-23",
+    "type": "transfer",
+    "amount": 1000,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Friend Hosting",
+    "comment": "Оплата VDS USA",
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-23",
+    "type": "transfer",
+    "amount": 10000,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Anthropic",
+    "comment": "Claude MAX",
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-23",
+    "type": "transfer",
+    "amount": 850,
+    "fromAccount": "Обязательные платежи",
+    "toAccount": "Обязательные платежи",
+    "payee": "МТС",
+    "comment": "Оплата МТС",
+    "categories": [
+      "Коммунальные платежи"
+    ]
+  },
+  {
+    "date": "2026-02-27",
+    "type": "transfer",
+    "amount": 1600,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "Black",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 699,
+    "fromAccount": "Яндекс",
+    "toAccount": "Яндекс",
+    "payee": "Умный дом",
+    "comment": "Оплата камеры в коридоре ",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 1600,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "HML.APP",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 10000,
+    "fromAccount": "Кредитка \"Альфа-Банк\"",
+    "toAccount": "Кредитка \"Альфа-Банк\"",
+    "payee": "GrowFood",
+    "comment": null,
+    "categories": [
+      "Доставка еды"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 1240,
+    "fromAccount": "HML.APP",
+    "toAccount": "HML.APP",
+    "payee": "Владислав Самородов",
+    "comment": null,
+    "categories": [
+      "Взносы участников"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 6600,
+    "fromAccount": "HML.APP",
+    "toAccount": "HML.APP",
+    "payee": "TIMEWEB.CLOUD",
+    "comment": "Облачная инфраструктура",
+    "categories": [
+      "Инфраструктура"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 250,
+    "fromAccount": "Райффайзенбанк ",
+    "toAccount": "Райффайзенбанк ",
+    "payee": "Soundstream",
+    "comment": "Пролетая над крыльцом психушки",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 250,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Yousician",
+    "comment": "Guitartuna",
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 450,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Spotify",
+    "comment": null,
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 1700,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Google Play",
+    "comment": "Подписка на Google One",
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 1240,
+    "fromAccount": "HML.APP",
+    "toAccount": "HML.APP",
+    "payee": "Константин Типоченков",
+    "comment": null,
+    "categories": [
+      "Взносы участников"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 1240,
+    "fromAccount": "HML.APP",
+    "toAccount": "HML.APP",
+    "payee": "Даяна Хесави",
+    "comment": null,
+    "categories": [
+      "Взносы участников"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "type": "transfer",
+    "amount": 1240,
+    "fromAccount": "HML.APP",
+    "toAccount": "HML.APP",
+    "payee": "Елизавета Хесави",
+    "comment": null,
+    "categories": [
+      "Взносы участников"
+    ]
+  },
+  {
+    "date": "2026-03-01",
+    "type": "transfer",
+    "amount": 5440,
+    "fromAccount": "Яндекс",
+    "toAccount": "Яндекс Сплит",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-03-01",
+    "type": "transfer",
+    "amount": 1990,
+    "fromAccount": "Райффайзенбанк ",
+    "toAccount": "Райффайзенбанк ",
+    "payee": "Telegram",
+    "comment": "Telegram Premium на год @erv3lus",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-01",
+    "type": "transfer",
+    "amount": 1990,
+    "fromAccount": "00. Альфа-Счет",
+    "toAccount": "00. Альфа-Счет",
+    "payee": "Telegram",
+    "comment": "Telegram Premium для аккаунта @gorosovka",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-03",
+    "type": "transfer",
+    "amount": 1100,
+    "fromAccount": "Обязательные платежи",
+    "toAccount": "Обязательные платежи",
+    "payee": "Ростелеком ",
+    "comment": "Оплата Ростелеком (Керамический проезд)",
+    "categories": [
+      "Коммунальные платежи"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "type": "transfer",
+    "amount": 100000,
+    "fromAccount": "Сбербанк",
+    "toAccount": "Кредитка \"Сбербанк\"",
+    "payee": null,
+    "comment": null,
+    "categories": []
+  },
+  {
+    "date": "2026-03-05",
+    "type": "transfer",
+    "amount": 8000,
+    "fromAccount": "Обязательные платежи",
+    "toAccount": "Обязательные платежи",
+    "payee": "ЖКУ Москва",
+    "comment": "Оплата ЖКУ",
+    "categories": [
+      "Коммунальные платежи"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "type": "transfer",
+    "amount": 150,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Songsterr",
+    "comment": null,
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "type": "transfer",
+    "amount": 2000,
+    "fromAccount": "Обязательные платежи",
+    "toAccount": "Обязательные платежи",
+    "payee": "МЭС",
+    "comment": "Оплата Мосэнергосбыт ",
+    "categories": [
+      "Коммунальные платежи"
+    ]
+  },
+  {
+    "date": "2026-03-06",
+    "type": "transfer",
+    "amount": 399,
+    "fromAccount": "Зарплатная карта",
+    "toAccount": "Зарплатная карта",
+    "payee": "Альфа-Банк",
+    "comment": "Подписка на Альфа Смарт",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-06",
+    "type": "transfer",
+    "amount": 10000,
+    "fromAccount": "Кредитка \"Альфа-Банк\"",
+    "toAccount": "Кредитка \"Альфа-Банк\"",
+    "payee": "GrowFood",
+    "comment": null,
+    "categories": [
+      "Доставка еды"
+    ]
+  },
+  {
+    "date": "2026-03-06",
+    "type": "transfer",
+    "amount": 400,
+    "fromAccount": "Наличные",
+    "toAccount": "Наличные",
+    "payee": "Дом",
+    "comment": "Оплата косьержки",
+    "categories": [
+      "Коммунальные платежи"
+    ]
+  },
+  {
+    "date": "2026-03-07",
+    "type": "transfer",
+    "amount": 199,
+    "fromAccount": "Райффайзенбанк ",
+    "toAccount": "Райффайзенбанк ",
+    "payee": "Яндекс Почта",
+    "comment": "Яндекс 360",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-08",
+    "type": "transfer",
+    "amount": 1100,
+    "fromAccount": "Обязательные платежи",
+    "toAccount": "Обязательные платежи",
+    "payee": "Ростелеком ",
+    "comment": "Оплата Ростелеком (Дмитровское шоссе)",
+    "categories": [
+      "Коммунальные платежи"
+    ]
+  },
+  {
+    "date": "2026-03-09",
+    "type": "transfer",
+    "amount": 699,
+    "fromAccount": "Яндекс",
+    "toAccount": "Яндекс",
+    "payee": "Умный дом",
+    "comment": "Подписка на хранилище данных для камеры в комнате",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-09",
+    "type": "transfer",
+    "amount": 450,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Duolingo",
+    "comment": null,
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-12",
+    "type": "transfer",
+    "amount": 449,
+    "fromAccount": "Яндекс",
+    "toAccount": "Яндекс",
+    "payee": "Яндекс Плюс",
+    "comment": null,
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-12",
+    "type": "transfer",
+    "amount": 10000,
+    "fromAccount": "Кредитка \"Альфа-Банк\"",
+    "toAccount": "Кредитка \"Альфа-Банк\"",
+    "payee": "GrowFood",
+    "comment": null,
+    "categories": [
+      "Доставка еды"
+    ]
+  },
+  {
+    "date": "2026-03-13",
+    "type": "transfer",
+    "amount": 1700,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "OpenAI",
+    "comment": null,
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-13",
+    "type": "transfer",
+    "amount": 1200,
+    "fromAccount": "Обязательные платежи",
+    "toAccount": "Обязательные платежи",
+    "payee": "Мегафон",
+    "comment": "Оплата Мегафон",
+    "categories": [
+      "Коммунальные платежи"
+    ]
+  },
+  {
+    "date": "2026-03-15",
+    "type": "transfer",
+    "amount": 299,
+    "fromAccount": "Райффайзенбанк ",
+    "toAccount": "Райффайзенбанк ",
+    "payee": "SingularityApp",
+    "comment": "SingularityApp ",
+    "categories": [
+      "Российские сервисы"
+    ]
+  },
+  {
+    "date": "2026-03-18",
+    "type": "transfer",
+    "amount": 10000,
+    "fromAccount": "Кредитка \"Альфа-Банк\"",
+    "toAccount": "Кредитка \"Альфа-Банк\"",
+    "payee": "GrowFood",
+    "comment": null,
+    "categories": [
+      "Доставка еды"
+    ]
+  },
+  {
+    "date": "2026-03-18",
+    "type": "transfer",
+    "amount": 1000,
+    "fromAccount": "Freedom Finance",
+    "toAccount": "Freedom Finance",
+    "payee": "Friend Hosting",
+    "comment": "Оплата VDS Germany",
+    "categories": [
+      "Иностранные сервисы"
+    ]
+  }
+]

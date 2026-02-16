@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "Bash(gh api:*)",
+      "Bash(python -m json.tool:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "mcp__zenmoney__get_instruments",
+      "mcp__zenmoney__get_accounts",
+      "mcp__zenmoney__get_transactions",
+      "mcp__zenmoney__get_categories",
+      "mcp__zenmoney__get_analytics",
+      "mcp__zenmoney__get_budgets",
+      "mcp__zenmoney__get_reminders",
+      "Bash(python calendar_parser.py:*)",
+      "Bash(powershell:*)",
+      "Bash(jq:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "mcp__zenmoney__delete_reminder",
+      "mcp__zenmoney__create_reminder_marker"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "zenmoney"
+  ]
+}

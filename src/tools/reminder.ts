@@ -393,4 +393,46 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
       };
     }
   );
+
+  // DELETE REMINDER MARKER (удаление разового напоминания)
+  server.tool(
+    'delete_reminder_marker',
+    'Delete a reminder marker (разовое напоминание). Soft-delete by setting state to deleted.',
+    {
+      id: z.string().describe('ReminderMarker UUID to delete'),
+    },
+    async ({ id }) => {
+      validateUUID(id, 'id');
+
+      await cache.ensureInitialized();
+
+      // Find the marker
+      const marker = cache.reminderMarkers.get(id);
+      if (!marker) {
+        throw new Error(`ReminderMarker not found: ${id}`);
+      }
+
+      // Soft-delete by setting state to 'deleted'
+      const deletedMarker: ReminderMarker = {
+        ...marker,
+        changed: Math.floor(Date.now() / 1000),
+        state: 'deleted',
+      };
+
+      await cache.writeDiff({
+        reminderMarker: [deletedMarker],
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            message: 'ReminderMarker deleted',
+            id,
+          }, null, 2)
+        }]
+      };
+    }
+  );
 }

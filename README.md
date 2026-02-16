@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server that provides Claude Code with full acces
 
 ## Features
 
-**18 Tools** for complete personal finance management:
+**19 Tools** for complete personal finance management:
 
 **Read Tools:**
 - `get_accounts` - View all accounts with balances and currency information
@@ -23,7 +23,8 @@ An MCP (Model Context Protocol) server that provides Claude Code with full acces
 - `create_reminder` - Create recurring scheduled transactions (expenses, income, transfers)
 - `create_reminder_marker` - Create one-time reminders (perfect for varying monthly payments)
 - `update_reminder` - Modify existing reminders
-- `delete_reminder` - Remove planned transactions
+- `delete_reminder` - Remove recurring reminders
+- `delete_reminder_marker` - Remove one-time reminder markers
 
 **Analytics:**
 - `get_analytics` - Analyze spending by category, account, or merchant for any date range
@@ -352,13 +353,25 @@ Update an existing reminder. Only provide fields you want to change.
 
 ### delete_reminder
 
-Delete a reminder (soft-delete by setting past end date).
+Delete a recurring reminder (soft-delete by setting past end date).
 
 **Parameters:**
 - `id` (string, required) - Reminder UUID
 
 **Returns:**
 - Confirmation of deletion
+
+### delete_reminder_marker
+
+Delete a one-time reminder marker (разовое напоминание).
+
+**Parameters:**
+- `id` (string, required) - ReminderMarker UUID to delete
+
+**Returns:**
+- Confirmation of deletion
+
+**Note:** This sets the marker state to 'deleted', removing it from planned transactions.
 
 ### get_categories
 
