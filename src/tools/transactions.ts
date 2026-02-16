@@ -11,15 +11,16 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
   // GET TRANSACTIONS
   server.tool(
     'get_transactions',
-    'Get ZenMoney transactions filtered by date range, account, or category. Returns up to 100 transactions by default.',
+    'Get ZenMoney transactions filtered by date range, account, category, or type. Returns up to 100 transactions by default.',
     {
       start_date: z.string().describe('Start date (yyyy-MM-dd). Required.'),
       end_date: z.string().optional().describe('End date (yyyy-MM-dd). Defaults to today.'),
       account_id: z.string().optional().describe('Filter by account UUID'),
       category_id: z.string().optional().describe('Filter by category UUID'),
+      type: z.enum(['expense', 'income', 'transfer']).optional().describe('Filter by transaction type'),
       limit: z.number().optional().default(100).describe('Max results (default: 100, max: 500)'),
     },
-    async ({ start_date, end_date, account_id, category_id, limit }) => {
+    async ({ start_date, end_date, account_id, category_id, type, limit }) => {
       validateDate(start_date, 'start_date');
       if (end_date) validateDate(end_date, 'end_date');
       if (account_id) validateUUID(account_id, 'account_id');
@@ -44,6 +45,20 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
         transactions = transactions.filter(t =>
           t.tag?.includes(category_id)
         );
+      }
+
+      // Filter by type
+      if (type) {
+        transactions = transactions.filter(t => {
+          const isTransfer = t.outcomeAccount !== t.incomeAccount && t.outcome > 0 && t.income > 0;
+          const isExpense = t.outcome > 0 && !isTransfer;
+          const isIncome = t.income > 0 && !isTransfer;
+
+          if (type === 'transfer') return isTransfer;
+          if (type === 'expense') return isExpense;
+          if (type === 'income') return isIncome;
+          return false;
+        });
       }
 
       // Sort by date desc
