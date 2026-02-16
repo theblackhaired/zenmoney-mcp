@@ -90,7 +90,7 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
         // Recurrence
         interval,
         step: step ?? 1,
-        points: points ?? null,
+        points: points ?? [],  // API requires non-null array for recurring reminders
         startDate: effectiveStartDate,
         endDate: end_date ?? null,
         notify: notify ?? true,
