@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DataCache } from '../utils/cache.js';
 import { formatReminder } from '../utils/format.js';
+import { todayString } from '../utils/validation.js';
 
 export function registerReminderTools(server: McpServer, cache: DataCache): void {
   server.tool(
@@ -16,8 +17,7 @@ export function registerReminderTools(server: McpServer, cache: DataCache): void
     async ({ include_processed, active_only, limit, markers_limit }) => {
       await cache.ensureInitialized();
 
-      const now = new Date();
-      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const todayStr = todayString();
 
       let reminders = Array.from(cache.reminders.values());
 
@@ -60,7 +60,7 @@ export function registerReminderTools(server: McpServer, cache: DataCache): void
         output.showing = effectiveLimit;
       }
 
-      return { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(output) }] };
     }
   );
 }

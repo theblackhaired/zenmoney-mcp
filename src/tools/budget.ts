@@ -85,7 +85,7 @@ export function registerBudgetWriteTools(server: McpServer, cache: DataCache): v
               income_lock: budget.incomeLock,
               outcome_lock: budget.outcomeLock,
             }
-          }, null, 2)
+          })
         }]
       };
     }
@@ -151,7 +151,7 @@ export function registerBudgetWriteTools(server: McpServer, cache: DataCache): v
               income_lock: updated.incomeLock,
               outcome_lock: updated.outcomeLock,
             }
-          }, null, 2)
+          })
         }]
       };
     }
@@ -202,7 +202,7 @@ export function registerBudgetWriteTools(server: McpServer, cache: DataCache): v
             message: 'Budget deleted',
             category: categoryName,
             month,
-          }, null, 2)
+          })
         }]
       };
     }

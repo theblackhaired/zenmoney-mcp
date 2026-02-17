@@ -51,8 +51,8 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
       if (type) {
         transactions = transactions.filter(t => {
           const isTransfer = t.outcomeAccount !== t.incomeAccount && t.outcome > 0 && t.income > 0;
-          const isExpense = t.outcome > 0 && !isTransfer;
-          const isIncome = t.income > 0 && !isTransfer;
+          const isExpense = t.outcome > 0 && t.income === 0 && !isTransfer;
+          const isIncome = t.income > 0 && t.outcome === 0 && !isTransfer;
 
           if (type === 'transfer') return isTransfer;
           if (type === 'expense') return isExpense;
@@ -76,7 +76,7 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
         result.showing = effectiveLimit;
       }
 
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
   );
 
@@ -148,6 +148,8 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
         latitude: null,
         longitude: null,
         qrCode: null,
+        incomeBankID: null,
+        outcomeBankID: null,
       };
 
       switch (type) {
@@ -189,7 +191,7 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
       const created = cache.getTransaction(tx.id) ?? tx;
       const formatted = formatTransaction(created, cache.accounts, cache.tags, cache.instruments, cache.merchants);
 
-      return { content: [{ type: 'text', text: JSON.stringify({ created: formatted }, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify({ created: formatted }) }] };
     }
   );
 
@@ -221,6 +223,10 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
         // Determine type and update accordingly
         const isTransfer = existing.outcomeAccount !== existing.incomeAccount && existing.outcome > 0 && existing.income > 0;
         if (isTransfer) {
+          const isCrossCurrency = existing.outcomeInstrument !== existing.incomeInstrument;
+          if (isCrossCurrency) {
+            throw new Error('Cannot update amount on cross-currency transfers. Delete and recreate the transaction with correct amounts.');
+          }
           updated.outcome = amount;
           updated.income = amount;
         } else if (existing.outcome > 0) {
@@ -238,7 +244,7 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
       const result = cache.getTransaction(id) ?? updated;
       const formatted = formatTransaction(result, cache.accounts, cache.tags, cache.instruments, cache.merchants);
 
-      return { content: [{ type: 'text', text: JSON.stringify({ updated: formatted }, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify({ updated: formatted }) }] };
     }
   );
 
@@ -268,7 +274,7 @@ export function registerTransactionTools(server: McpServer, cache: DataCache): v
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify({ deleted: true, id, date: existing.date, amount: existing.outcome || existing.income }, null, 2),
+          text: JSON.stringify({ deleted: true, id, date: existing.date, amount: existing.outcome || existing.income }),
         }],
       };
     }

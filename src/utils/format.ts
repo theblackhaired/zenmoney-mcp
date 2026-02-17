@@ -9,10 +9,8 @@ export function formatAccount(account: Account, instruments: Map<number, Instrum
     type: account.type,
     balance: account.balance,
     currency: currency?.shortTitle ?? 'Unknown',
-    inBalance: account.inBalance,
     creditLimit: account.creditLimit || undefined,
     archived: account.archive || undefined,
-    company: undefined, // resolve later if needed
   };
 }
 
@@ -29,8 +27,8 @@ export function formatTransaction(
   const outCurrency = instruments.get(tx.outcomeInstrument);
   const inCurrency = instruments.get(tx.incomeInstrument);
   const isTransfer = tx.outcomeAccount !== tx.incomeAccount && tx.outcome > 0 && tx.income > 0;
-  const isExpense = tx.outcome > 0 && !isTransfer;
-  const isIncome = tx.income > 0 && !isTransfer;
+  const isExpense = tx.outcome > 0 && tx.income === 0 && !isTransfer;
+  const isIncome = tx.income > 0 && tx.outcome === 0 && !isTransfer;
 
   const categories = tx.tag?.map(id => tags.get(id)?.title).filter(Boolean) ?? [];
   const merchant = tx.merchant ? merchants.get(tx.merchant)?.title : undefined;
@@ -72,7 +70,7 @@ export function formatTransaction(
 export function formatBudget(budget: Budget, tags: Map<string, Tag>): Record<string, unknown> {
   const tag = budget.tag ? tags.get(budget.tag) : null;
   return {
-    category: tag?.title ?? (budget.tag === null ? 'Uncategorized' : 'Total'),
+    category: tag?.title ?? (budget.tag === null ? 'Total' : budget.tag),
     month: budget.date,
     income: budget.income,
     incomeLock: budget.incomeLock,

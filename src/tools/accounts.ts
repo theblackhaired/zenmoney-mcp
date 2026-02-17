@@ -21,7 +21,7 @@ export function registerAccountTools(server: McpServer, cache: DataCache): void 
       }
 
       const formatted = accounts.map(a => formatAccount(a, cache.instruments));
-      return { content: [{ type: 'text', text: JSON.stringify(formatted, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(formatted) }] };
     }
   );
 
@@ -79,7 +79,7 @@ export function registerAccountTools(server: McpServer, cache: DataCache): void 
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify(created ? formatAccount(created, cache.instruments) : newAccount, null, 2),
+          text: JSON.stringify(created ? formatAccount(created, cache.instruments) : newAccount),
         }],
       };
     }

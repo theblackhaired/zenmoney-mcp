@@ -156,6 +156,8 @@ export interface Transaction extends TransactionSpecification {
   latitude: number | null;
   longitude: number | null;
   qrCode: string | null;
+  incomeBankID: string | null;
+  outcomeBankID: string | null;
 }
 
 export interface Reminder extends TransactionSpecification {

@@ -30,6 +30,10 @@ except ImportError:
 
 
 async def main():
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
     parser = argparse.ArgumentParser(description="ZenMoney MCP Skill Executor")
     parser.add_argument("--call", help="JSON tool call: {\"tool\": \"name\", \"arguments\": {...}}")
     parser.add_argument("--describe", help="Get detailed schema for a tool")

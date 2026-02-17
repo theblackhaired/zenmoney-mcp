@@ -21,7 +21,7 @@ export function registerBudgetTools(server: McpServer, cache: DataCache): void {
         .filter(b => b.date === monthDate)
         .map(b => formatBudget(b, cache.tags));
 
-      return { content: [{ type: 'text', text: JSON.stringify(budgets, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(budgets) }] };
     }
   );
 }

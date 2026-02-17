@@ -117,7 +117,7 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
               end_date: end_date ?? 'indefinite',
               points: points ?? 'all',
             }
-          }, null, 2)
+          })
         }]
       };
     }
@@ -205,7 +205,7 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
             success: true,
             message: 'Reminder updated',
             id: updated.id,
-          }, null, 2)
+          })
         }]
       };
     }
@@ -261,7 +261,7 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
             success: true,
             message: `Reminder deleted with ${deletions.length - 1} associated markers`,
             id,
-          }, null, 2)
+          })
         }]
       };
     }
@@ -349,10 +349,13 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
         effectiveReminderId = oneTimeReminder.id;
       }
 
-      // Validate reminder exists
-      const reminder = cache.reminders.get(effectiveReminderId);
-      if (!reminder) {
-        throw new Error(`Reminder not found: ${effectiveReminderId}`);
+      // Skip validation for auto-created reminders (we just created it)
+      // For user-provided reminder_id, validate it exists
+      if (reminder_id) {
+        const reminder = cache.reminders.get(effectiveReminderId);
+        if (!reminder) {
+          throw new Error(`Reminder not found: ${effectiveReminderId}`);
+        }
       }
 
       // Create ReminderMarker
@@ -403,7 +406,7 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
               reminder_id: effectiveReminderId,
               auto_created_reminder: !reminder_id,
             }
-          }, null, 2)
+          })
         }]
       };
     }
@@ -441,7 +444,7 @@ export function registerReminderWriteTools(server: McpServer, cache: DataCache):
             success: true,
             message: 'ReminderMarker deleted',
             id,
-          }, null, 2)
+          })
         }]
       };
     }

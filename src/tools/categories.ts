@@ -16,24 +16,18 @@ export function registerCategoryTools(server: McpServer, cache: DataCache): void
       const roots = tags.filter(t => !t.parent);
       const children = tags.filter(t => t.parent);
 
-      const tree = roots.map(root => ({
-        id: root.id,
-        title: root.title,
-        icon: root.icon,
-        showIncome: root.showIncome,
-        showOutcome: root.showOutcome,
-        children: children
+      const tree = roots.map(root => {
+        const childList = children
           .filter(c => c.parent === root.id)
-          .map(c => ({
-            id: c.id,
-            title: c.title,
-            icon: c.icon,
-            showIncome: c.showIncome,
-            showOutcome: c.showOutcome,
-          })),
-      }));
+          .map(c => ({ id: c.id, title: c.title }));
+        return {
+          id: root.id,
+          title: root.title,
+          ...(childList.length > 0 ? { children: childList } : {}),
+        };
+      });
 
-      return { content: [{ type: 'text', text: JSON.stringify(tree, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(tree) }] };
     }
   );
 }

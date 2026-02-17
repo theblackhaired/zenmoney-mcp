@@ -11,7 +11,7 @@ export function registerSuggestTools(server: McpServer, client: ZenMoneyClient):
     },
     async ({ payee }) => {
       const suggestions = await client.suggest({ payee });
-      return { content: [{ type: 'text', text: JSON.stringify(suggestions, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(suggestions) }] };
     }
   );
 }

@@ -18,15 +18,11 @@ export function registerAuthTools(server: McpServer, client: ZenMoneyClient, cac
           content: [
             {
               type: 'text',
-              text: JSON.stringify(
-                {
-                  status: 'authenticated',
-                  message: 'Token is valid and working',
-                  note: 'ZenMoney API is accessible',
-                },
-                null,
-                2
-              ),
+              text: JSON.stringify({
+                status: 'authenticated',
+                message: 'Token is valid and working',
+                note: 'ZenMoney API is accessible',
+              }),
             },
           ],
         };
@@ -37,18 +33,14 @@ export function registerAuthTools(server: McpServer, client: ZenMoneyClient, cac
           content: [
             {
               type: 'text',
-              text: JSON.stringify(
-                {
-                  status: 'error',
-                  message: 'Authentication failed',
-                  error: errorMessage,
-                  solution: errorMessage.includes('401') || errorMessage.includes('expired')
-                    ? 'Token expired. Run: npm run auth or get a new token from https://budgera.com/settings/export'
-                    : 'Check your credentials or network connection',
-                },
-                null,
-                2
-              ),
+              text: JSON.stringify({
+                status: 'error',
+                message: 'Authentication failed',
+                error: errorMessage,
+                solution: errorMessage.includes('401') || errorMessage.includes('expired')
+                  ? 'Token expired. Run: npm run auth or get a new token from https://budgera.com/settings/export'
+                  : 'Check your credentials or network connection',
+              }),
             },
           ],
         };

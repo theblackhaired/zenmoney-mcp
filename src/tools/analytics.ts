@@ -109,7 +109,7 @@ export function registerAnalyticsTools(server: McpServer, cache: DataCache): voi
           .sort((a, b) => b.total - a.total),
       };
 
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
   );
 }
