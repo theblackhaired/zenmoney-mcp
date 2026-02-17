@@ -61,6 +61,11 @@ python ~/.claude/skills/zenmoney/executor.py --call '{"tool":"get_analytics","ar
 
 **Budget check:** `get_budgets` + `get_analytics` + `get_accounts` → remaining capacity
 
+## User Profile
+
+Before performing budgets, reminders, or financial planning — read `~/.claude/skills/zenmoney/PROFILE.md`.
+It contains: billing period rule (20th–19th), account UUIDs, category UUIDs, financial plan 2026, birthday budgets, transfer rules.
+
 ## Smart Features
 
 - Natural dates: "в этом месяце" → current month; "в январе" → 2026-01-01/31; "за 30 дней" → last 30d

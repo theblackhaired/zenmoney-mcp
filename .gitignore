@@ -5,3 +5,4 @@ dist/
 *.tgz
 .claude/settings.local.json
 skill/mcp-config.json
+skill/PROFILE.md
