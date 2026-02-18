@@ -30,14 +30,14 @@ python3 scripts/cli.py --describe get_transactions
 
 **Read:**
 - `get_accounts` — `include_archived`
-- `get_transactions` — `start_date`(req), `end_date`, `account_id`, `category_id`, `type`(expense/income/transfer), `limit`(max 500)
+- `get_transactions` — `start_date`(req), `end_date`, `account_id`, `category_id`, `type`(expense/income/transfer), `limit`(max 500), `offset`
 - `get_categories` — no args
 - `get_instruments` — `include_all`
 - `get_budgets` — `month`(req, yyyy-MM)
-- `get_reminders` — `include_processed`, `active_only`, `limit`, `markers_limit`
+- `get_reminders` — `include_processed`, `active_only`, `limit`, `markers_limit`, `offset`
 - `get_analytics` — `start_date`(req), `end_date`, `group_by`(category/account/merchant), `type`(expense/income/all)
 - `suggest` — `payee`(req)
-- `get_merchants` — `search`, `limit`
+- `get_merchants` — `search`, `limit`, `offset`
 - `check_auth_status` — no args
 
 **Write:**

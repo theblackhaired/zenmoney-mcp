@@ -420,6 +420,7 @@ TOOL_DOCS: dict[str, dict] = {
             "category_id": "str UUID (optional)",
             "type": "str expense|income|transfer (optional)",
             "limit": "int (default 100, max 500)",
+            "offset": "int (default 0)",
         },
     },
     "get_categories": {
@@ -441,6 +442,7 @@ TOOL_DOCS: dict[str, dict] = {
             "active_only": "bool (default true)",
             "limit": "int (default 50)",
             "markers_limit": "int (default 5)",
+            "offset": "int (default 0)",
         },
     },
     "get_analytics": {
@@ -458,7 +460,7 @@ TOOL_DOCS: dict[str, dict] = {
     },
     "get_merchants": {
         "desc": "Get merchants, optionally filtered by search query",
-        "params": {"search": "str (optional)", "limit": "int (default 50)"},
+        "params": {"search": "str (optional)", "limit": "int (default 50)", "offset": "int (default 0)"},
     },
     "check_auth_status": {
         "desc": "Check authentication status and token validity",
@@ -690,6 +692,7 @@ async def tool_get_transactions(args: dict) -> str:
     category_id = _g("category_id", args)
     tx_type = _g("type", args)
     limit = min(int(_g("limit", args, 100)), 500)
+    offset = int(_g("offset", args, 0))
 
     if account_id:
         _validate_uuid(account_id, "account_id")
@@ -708,12 +711,13 @@ async def tool_get_transactions(args: dict) -> str:
 
     txs.sort(key=lambda t: (t.get("date", ""), t.get("created", 0)), reverse=True)
     total = len(txs)
-    limited = txs[:limit]
+    limited = txs[offset:offset + limit]
     result: dict[str, Any] = {"transactions": [_fmt_transaction(t) for t in limited]}
-    if total > limit:
+    if total > offset + len(limited):
         result["truncated"] = True
         result["total"] = total
-        result["showing"] = limit
+        result["showing"] = len(limited)
+        result["offset"] = offset
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -758,6 +762,7 @@ async def tool_get_reminders(args: dict) -> str:
     active_only = bool(_g("active_only", args, True))
     limit = int(_g("limit", args, 50))
     markers_limit = int(_g("markers_limit", args, 5))
+    offset = int(_g("offset", args, 0))
     today_str = _today()
 
     reminders = CACHE.reminders()
@@ -766,7 +771,7 @@ async def tool_get_reminders(args: dict) -> str:
     reminders.sort(key=lambda r: r.get("startDate", ""), reverse=True)
     total = len(reminders)
     eff_limit = min(limit, 200)
-    reminders = reminders[:eff_limit]
+    reminders = reminders[offset:offset + eff_limit]
 
     result_list = []
     for r in reminders:
@@ -785,10 +790,11 @@ async def tool_get_reminders(args: dict) -> str:
         result_list.append(fmt)
 
     output: dict[str, Any] = {"reminders": result_list}
-    if total > eff_limit:
+    if total > offset + len(reminders):
         output["truncated"] = True
         output["total"] = total
-        output["showing"] = eff_limit
+        output["showing"] = len(reminders)
+        output["offset"] = offset
     return json.dumps(output, ensure_ascii=False)
 
 
@@ -892,19 +898,21 @@ async def tool_suggest(args: dict) -> str:
 async def tool_get_merchants(args: dict) -> str:
     search = _g("search", args)
     limit = int(_g("limit", args, 50))
+    offset = int(_g("offset", args, 0))
     merchants = CACHE.merchants()
     if search:
         q = search.lower()
         merchants = [m for m in merchants if q in m.get("title", "").lower()]
     total = len(merchants)
     eff_limit = min(limit, 200)
-    limited = merchants[:eff_limit]
+    limited = merchants[offset:offset + eff_limit]
     formatted = [{"id": m["id"], "title": m["title"]} for m in limited]
     result: dict[str, Any] = {"merchants": formatted}
-    if total > eff_limit:
+    if total > offset + len(limited):
         result["truncated"] = True
         result["total"] = total
-        result["showing"] = eff_limit
+        result["showing"] = len(limited)
+        result["offset"] = offset
     return json.dumps(result, ensure_ascii=False)
 
 
