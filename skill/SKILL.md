@@ -1,73 +1,101 @@
 ---
 name: zenmoney
-description: "Token-efficient personal finance management through ZenMoney API via executor. Use when the user needs to: (1) Analyze spending and income (expenses by category, monthly budgets, financial analytics), (2) Create or modify transactions (add expenses, record income, transfers between accounts), (3) View account balances and financial data, (4) Plan budget or check financial capacity for purchases, (5) Work with reminders and scheduled payments, (6) Get ML-powered category suggestions for transactions. Triggers include questions about money, spending, budgets, accounts, or any financial management tasks in Russian or English. Context-efficient: ~100 tokens idle vs ~10k for direct MCP."
+description: "Personal finance management through ZenMoney API — 22 tools for accounts, transactions, budgets, reminders, analytics, and ML suggestions. Triggers: money, spending, budgets, accounts, financial management."
+metadata:
+  openclaw:
+    requires:
+      bins: [python3]
 ---
 
-# ZenMoney Personal Finance Assistant (Executor Mode)
+# ZenMoney Personal Finance Assistant
 
-All tools invoked via executor.py through bash.
+22 tools для ZenMoney API. Все возвращают JSON.
 
-## Invocation Pattern
+## Как вызывать
 
 ```bash
-# All tool calls use this pattern:
-python ~/.claude/skills/zenmoney/executor.py --call '{"tool": "TOOL_NAME", "arguments": {...}}'
-
-# List tools / get schema:
-python ~/.claude/skills/zenmoney/executor.py --list
-python ~/.claude/skills/zenmoney/executor.py --describe TOOL_NAME
+python3 scripts/cli.py --call '{"tool":"TOOL_NAME","arguments":{...}}'
 ```
 
-Always use absolute path to executor.py.
+Примеры:
+```bash
+python3 scripts/cli.py --call '{"tool":"get_accounts","arguments":{}}'
+python3 scripts/cli.py --call '{"tool":"get_analytics","arguments":{"start_date":"2026-02-01","type":"expense","group_by":"category"}}'
+python3 scripts/cli.py --call '{"tool":"suggest","arguments":{"payee":"Яндекс Еда"}}'
+python3 scripts/cli.py --list
+python3 scripts/cli.py --describe get_transactions
+```
 
 ## Tool Reference (22 tools)
 
 **Read:**
 - `get_accounts` — `include_archived`
-- `get_transactions` — `start_date`(req), `end_date`, `account_id`, `category_id`, `type`, `limit`(max 500)
+- `get_transactions` — `start_date`(req), `end_date`, `account_id`, `category_id`, `type`(expense/income/transfer), `limit`(max 500)
 - `get_categories` — no args
-- `get_instruments` — no args
+- `get_instruments` — `include_all`
 - `get_budgets` — `month`(req, yyyy-MM)
-- `get_reminders` — `include_processed`
+- `get_reminders` — `include_processed`, `active_only`, `limit`, `markers_limit`
 - `get_analytics` — `start_date`(req), `end_date`, `group_by`(category/account/merchant), `type`(expense/income/all)
 - `suggest` — `payee`(req)
+- `get_merchants` — `search`, `limit`
+- `check_auth_status` — no args
 
 **Write:**
-- `create_transaction` — `type`(req: expense/income/transfer), `amount`(req), `account_id`(req), `to_account_id`, `category_ids`, `date`, `payee`, `comment`
-- `update_transaction` — `id`(req), any field
+- `create_transaction` — `type`(req), `amount`(req), `account_id`(req), `to_account_id`, `category_ids`, `date`, `payee`, `comment`, `currency_id`, `income_amount`
+- `update_transaction` — `id`(req), `amount`, `category_ids`, `date`, `payee`, `comment`
 - `delete_transaction` — `id`(req)
-- `create_account` — `title`, `type`, `currency_id`(req), `balance`, `credit_limit`
-- `create_reminder` — `type`, `amount`, `account_id`, `interval`(req: day/week/month/year/null), `points`, `start_date`, `end_date`, `payee`, `comment`
-- `update_reminder` / `delete_reminder` — `id`(req)
-- `create_reminder_marker` — `type`, `amount`, `account_id`, `date`(req), `payee`; auto-creates Reminder if no `reminder_id`
+- `create_account` — `title`, `type`(cash/ccard/checking), `currency_id`(req), `balance`, `credit_limit`
+- `create_budget` — `month`(req, yyyy-MM), `category`(req, name/UUID/"ALL"), `income`, `outcome`, `income_lock`, `outcome_lock`
+- `update_budget` — `month`(req), `category`(req), partial fields
+- `delete_budget` — `month`(req), `category`(req)
+- `create_reminder` — `type`, `amount`, `account_id`, `interval`(req), `step`, `points`, `start_date`, `end_date`, `payee`, `comment`, `notify`
+- `update_reminder` — `id`(req), partial fields
+- `delete_reminder` — `id`(req)
+- `create_reminder_marker` — `type`, `amount`, `account_id`, `date`(req), `reminder_id`, `payee`, `comment`, `notify`
 - `delete_reminder_marker` — `id`(req)
-- `create_budget` — `month`, `category`(req), `income`, `outcome`, `income_lock`, `outcome_lock`
-- `update_budget` / `delete_budget` — `month`, `category`(req)
 
-**System:**
-- `check_auth_status` — no args
+## Быстрый маршрутизатор
+
+| Задача | Tool(s) |
+|---|---|
+| Баланс, счета | `get_accounts()` |
+| Расходы за период | `get_transactions(start_date, type="expense")` |
+| Аналитика расходов | `get_analytics(start_date, group_by="category")` |
+| Добавить расход/доход | `suggest(payee)` → `create_transaction(...)` |
+| Перевод между счетами | `create_transaction(type="transfer", account_id, to_account_id)` |
+| Бюджет на месяц | `get_budgets(month)` |
+| Установить бюджет | `create_budget(month, category, outcome)` |
+| Напоминания/подписки | `get_reminders()` |
+| Создать напоминание | `create_reminder(type, amount, account_id, interval)` |
+| Категории | `get_categories()` |
+| Валюты | `get_instruments()` |
+| ML подсказка категории | `suggest(payee)` |
 
 ## Workflows
 
-**Expense analysis:**
+**Анализ расходов:**
 ```bash
-python ~/.claude/skills/zenmoney/executor.py --call '{"tool":"get_analytics","arguments":{"start_date":"2026-02-01","end_date":"2026-02-28","type":"expense","group_by":"category"}}'
+python3 scripts/cli.py --call '{"tool":"get_analytics","arguments":{"start_date":"2026-02-01","end_date":"2026-02-28","type":"expense","group_by":"category"}}'
 ```
 
-**Add transaction:**
-1. `suggest` with payee → get category UUID
-2. `get_accounts` → get account UUID
-3. `create_transaction` with type/amount/account_id/category_ids
+**Добавить транзакцию:**
+1. `suggest` с payee → UUID категории
+2. `get_accounts` → UUID счёта
+3. `create_transaction` с type/amount/account_id/category_ids
 
-**Budget check:** `get_budgets` + `get_analytics` + `get_accounts` → remaining capacity
+**Проверка бюджета:** `get_budgets` + `get_analytics` + `get_accounts` → остаток
 
 ## User Profile
 
-Before performing budgets, reminders, or financial planning — read `~/.claude/skills/zenmoney/PROFILE.md`.
+Before performing budgets, reminders, or financial planning — read `PROFILE.md` in skill directory.
 It contains: billing period rule (20th–19th), account UUIDs, category UUIDs, financial plan 2026, birthday budgets, transfer rules.
 
-## Smart Features
+## Форматы данных
 
-- Natural dates: "в этом месяце" → current month; "в январе" → 2026-01-01/31; "за 30 дней" → last 30d
-- ML categories: always call `suggest(payee)` before creating a transaction
-- Auto context: "Сколько потратил?" → current month analytics; "Баланс" → accounts
+- Даты: yyyy-MM-dd
+- Месяцы: yyyy-MM
+- UUID: стандартный формат (get from get_accounts, get_categories)
+- Валюта: instrument id (get from get_instruments)
+- Типы транзакций: expense, income, transfer
+- Типы счетов: cash, ccard, checking
+- Интервалы напоминаний: day, week, month, year

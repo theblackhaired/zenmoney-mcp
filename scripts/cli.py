@@ -1,0 +1,1586 @@
+#!/usr/bin/env python3
+"""ZenMoney CLI — standalone Python executor for OpenClaw AgentSkill.
+
+Usage:
+  python cli.py --list
+  python cli.py --describe get_accounts
+  python cli.py --call '{"tool":"get_accounts","arguments":{}}'
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import datetime
+import json
+import os
+import re
+import sys
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+sys.stdout.reconfigure(encoding="utf-8")
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# ---------------------------------------------------------------------------
+# Config: load token from config.json or env
+# ---------------------------------------------------------------------------
+_cfg_path = ROOT / "config.json"
+if _cfg_path.exists():
+    try:
+        _cfg = json.loads(_cfg_path.read_text(encoding="utf-8"))
+        if _cfg.get("token") and not os.environ.get("ZENMONEY_TOKEN"):
+            os.environ["ZENMONEY_TOKEN"] = _cfg["token"]
+    except Exception:
+        pass
+
+TOKEN = os.environ.get("ZENMONEY_TOKEN", "")
+BASE_URL = "https://api.zenmoney.ru"
+CACHE_PATH = ROOT / ".cache.json"
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _validate_uuid(val: str, field: str) -> None:
+    if not _UUID_RE.match(val):
+        raise ValueError(f"Invalid UUID for {field}: {val}")
+
+
+def _validate_date(val: str, field: str) -> None:
+    if not _DATE_RE.match(val):
+        raise ValueError(f"Invalid date for {field}: {val}. Expected yyyy-MM-dd")
+
+
+def _validate_month(val: str, field: str) -> None:
+    if not _MONTH_RE.match(val):
+        raise ValueError(f"Invalid month for {field}: {val}. Expected yyyy-MM")
+
+
+def _validate_positive(val: float, field: str) -> None:
+    if val < 0:
+        raise ValueError(f"{field} must be non-negative, got {val}")
+
+
+def _today() -> str:
+    return datetime.date.today().isoformat()
+
+
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _new_uuid() -> str:
+    return str(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# Cache (file-backed)
+# ---------------------------------------------------------------------------
+_ENTITY_KEYS = [
+    "instrument", "account", "tag", "merchant",
+    "transaction", "budget", "reminder", "reminderMarker",
+    "user", "country", "company",
+]
+# Keys whose entities have numeric ids
+_NUMERIC_ID_KEYS = {"instrument", "user", "country", "company"}
+
+
+class Cache:
+    """File-backed ZenMoney entity cache with incremental sync."""
+
+    def __init__(self) -> None:
+        self.server_timestamp: int = 0
+        # entity_name -> {id_str: entity_dict}
+        self.data: dict[str, dict[str, Any]] = {k: {} for k in _ENTITY_KEYS}
+        self.data["deletion"] = {}
+
+    # -- persistence --------------------------------------------------------
+
+    def load(self) -> None:
+        if not CACHE_PATH.exists():
+            return
+        try:
+            raw = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        self.server_timestamp = raw.get("serverTimestamp", 0)
+        for key in _ENTITY_KEYS:
+            arr = raw.get(key, [])
+            store: dict[str, Any] = {}
+            for item in arr:
+                if key == "budget":
+                    bk = self._budget_key(item)
+                    store[bk] = item
+                else:
+                    store[str(item.get("id", ""))] = item
+            self.data[key] = store
+
+    def save(self) -> None:
+        out: dict[str, Any] = {"serverTimestamp": self.server_timestamp}
+        for key in _ENTITY_KEYS:
+            out[key] = list(self.data[key].values())
+        CACHE_PATH.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+
+    # -- apply diff ---------------------------------------------------------
+
+    def apply_diff(self, diff: dict[str, Any]) -> None:
+        if "serverTimestamp" in diff:
+            self.server_timestamp = diff["serverTimestamp"]
+        for key in _ENTITY_KEYS:
+            items = diff.get(key)
+            if not items:
+                continue
+            for item in items:
+                if key == "budget":
+                    bk = self._budget_key(item)
+                    self.data[key][bk] = item
+                else:
+                    self.data[key][str(item.get("id", ""))] = item
+        # deletions
+        for d in diff.get("deletion", []):
+            obj_type = d.get("object", "")
+            did = str(d.get("id", ""))
+            if obj_type in self.data and did in self.data[obj_type]:
+                del self.data[obj_type][did]
+
+    @staticmethod
+    def _budget_key(b: dict) -> str:
+        tag = b.get("tag")
+        return f"{'null' if tag is None else tag}:{b.get('date', '')}"
+
+    # -- helpers ------------------------------------------------------------
+
+    def accounts(self) -> list[dict]:
+        return list(self.data["account"].values())
+
+    def transactions(self) -> list[dict]:
+        return list(self.data["transaction"].values())
+
+    def tags(self) -> list[dict]:
+        return list(self.data["tag"].values())
+
+    def instruments(self) -> list[dict]:
+        return list(self.data["instrument"].values())
+
+    def budgets(self) -> list[dict]:
+        return list(self.data["budget"].values())
+
+    def reminders(self) -> list[dict]:
+        return list(self.data["reminder"].values())
+
+    def reminder_markers(self) -> list[dict]:
+        return list(self.data["reminderMarker"].values())
+
+    def merchants(self) -> list[dict]:
+        return list(self.data["merchant"].values())
+
+    def users(self) -> list[dict]:
+        return list(self.data["user"].values())
+
+    def get(self, entity: str, eid: str) -> dict | None:
+        return self.data.get(entity, {}).get(str(eid))
+
+    def get_instrument(self, iid: int | str) -> dict | None:
+        return self.data["instrument"].get(str(iid))
+
+    def get_account(self, aid: str) -> dict | None:
+        return self.data["account"].get(aid)
+
+    def get_tag(self, tid: str) -> dict | None:
+        return self.data["tag"].get(tid)
+
+    def get_merchant(self, mid: str) -> dict | None:
+        return self.data["merchant"].get(mid)
+
+    def first_user(self) -> dict | None:
+        users = self.users()
+        return users[0] if users else None
+
+
+CACHE = Cache()
+
+
+# ---------------------------------------------------------------------------
+# HTTP client (httpx, async)
+# ---------------------------------------------------------------------------
+import httpx  # noqa: E402
+
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=60.0)
+    return _client
+
+
+async def _close_client() -> None:
+    global _client
+    if _client and not _client.is_closed:
+        await _client.aclose()
+        _client = None
+
+
+async def _api_post(endpoint: str, body: dict) -> dict:
+    """POST to ZenMoney API, returns parsed JSON."""
+    if not TOKEN:
+        raise RuntimeError("ZENMONEY_TOKEN is not set. Set env var or add to config.json")
+    client = _get_client()
+    resp = await client.post(
+        f"{BASE_URL}{endpoint}",
+        json=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {TOKEN}",
+        },
+    )
+    if resp.status_code == 401:
+        raise RuntimeError("Token expired (401). Get a new token from https://budgera.com/settings/export")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def _sync(extra: dict | None = None) -> dict:
+    """Incremental or full sync via /v8/diff/."""
+    body: dict[str, Any] = {
+        "currentClientTimestamp": _now_ts(),
+        "serverTimestamp": CACHE.server_timestamp,
+    }
+    if extra:
+        body.update(extra)
+    diff = await _api_post("/v8/diff/", body)
+    CACHE.apply_diff(diff)
+    CACHE.save()
+    return diff
+
+
+async def _write_diff(changes: dict) -> dict:
+    """Write entities through diff and update cache."""
+    body: dict[str, Any] = {
+        "currentClientTimestamp": _now_ts(),
+        "serverTimestamp": CACHE.server_timestamp,
+    }
+    body.update(changes)
+    diff = await _api_post("/v8/diff/", body)
+    CACHE.apply_diff(diff)
+    CACHE.save()
+    return diff
+
+
+# ---------------------------------------------------------------------------
+# Format helpers
+# ---------------------------------------------------------------------------
+
+def _fmt_account(a: dict) -> dict:
+    instr = CACHE.get_instrument(a.get("instrument", 0))
+    result: dict[str, Any] = {
+        "id": a["id"],
+        "title": a.get("title", ""),
+        "type": a.get("type", ""),
+        "balance": a.get("balance", 0),
+        "currency": instr["shortTitle"] if instr else "Unknown",
+        "inBalance": a.get("inBalance", True),
+    }
+    if a.get("creditLimit"):
+        result["creditLimit"] = a["creditLimit"]
+    if a.get("archive"):
+        result["archived"] = True
+    return result
+
+
+def _tx_type(t: dict) -> str:
+    is_transfer = (
+        t.get("outcomeAccount") != t.get("incomeAccount")
+        and t.get("outcome", 0) > 0
+        and t.get("income", 0) > 0
+    )
+    if is_transfer:
+        return "transfer"
+    if t.get("outcome", 0) > 0 and t.get("income", 0) == 0:
+        return "expense"
+    if t.get("income", 0) > 0 and t.get("outcome", 0) == 0:
+        return "income"
+    return "unknown"
+
+
+def _fmt_transaction(t: dict) -> dict:
+    tt = _tx_type(t)
+    out_acct = CACHE.get_account(t.get("outcomeAccount", ""))
+    in_acct = CACHE.get_account(t.get("incomeAccount", ""))
+    out_instr = CACHE.get_instrument(t.get("outcomeInstrument", 0))
+    in_instr = CACHE.get_instrument(t.get("incomeInstrument", 0))
+    categories = []
+    for tid in (t.get("tag") or []):
+        tag = CACHE.get_tag(tid)
+        if tag:
+            categories.append(tag["title"])
+    merchant_name = None
+    if t.get("merchant"):
+        m = CACHE.get_merchant(t["merchant"])
+        if m:
+            merchant_name = m["title"]
+
+    result: dict[str, Any] = {"id": t["id"], "date": t.get("date", ""), "type": tt}
+
+    if tt == "expense":
+        result["amount"] = t.get("outcome", 0)
+        result["currency"] = out_instr["shortTitle"] if out_instr else "RUB"
+        result["account"] = out_acct["title"] if out_acct else None
+    elif tt == "income":
+        result["amount"] = t.get("income", 0)
+        result["currency"] = in_instr["shortTitle"] if in_instr else "RUB"
+        result["account"] = in_acct["title"] if in_acct else None
+    else:  # transfer
+        result["outcomeAmount"] = t.get("outcome", 0)
+        result["outcomeCurrency"] = out_instr["shortTitle"] if out_instr else "RUB"
+        result["fromAccount"] = out_acct["title"] if out_acct else None
+        result["incomeAmount"] = t.get("income", 0)
+        result["incomeCurrency"] = in_instr["shortTitle"] if in_instr else "RUB"
+        result["toAccount"] = in_acct["title"] if in_acct else None
+
+    if categories:
+        result["categories"] = categories
+    if t.get("payee"):
+        result["payee"] = t["payee"]
+    if t.get("comment"):
+        result["comment"] = t["comment"]
+    if t.get("hold"):
+        result["hold"] = True
+    if merchant_name:
+        result["merchant"] = merchant_name
+    return result
+
+
+def _fmt_budget(b: dict) -> dict:
+    tag = CACHE.get_tag(b["tag"]) if b.get("tag") else None
+    return {
+        "category": tag["title"] if tag else ("Total" if b.get("tag") is None else b.get("tag")),
+        "month": b.get("date", ""),
+        "income": b.get("income", 0),
+        "incomeLock": b.get("incomeLock", False),
+        "outcome": b.get("outcome", 0),
+        "outcomeLock": b.get("outcomeLock", False),
+    }
+
+
+def _fmt_reminder(r: dict) -> dict:
+    in_acct = CACHE.get_account(r.get("incomeAccount", ""))
+    out_acct = CACHE.get_account(r.get("outcomeAccount", ""))
+    categories = []
+    for tid in (r.get("tag") or []):
+        tag = CACHE.get_tag(tid)
+        if tag:
+            categories.append(tag["title"])
+    result: dict[str, Any] = {
+        "id": r["id"],
+        "payee": r.get("payee"),
+        "comment": r.get("comment"),
+    }
+    if r.get("income", 0) != 0:
+        result["income"] = r["income"]
+    if r.get("outcome", 0) != 0:
+        result["outcome"] = r["outcome"]
+    result["fromAccount"] = out_acct["title"] if out_acct else None
+    result["toAccount"] = in_acct["title"] if in_acct else None
+    if categories:
+        result["categories"] = categories
+    result["interval"] = r.get("interval")
+    result["step"] = r.get("step")
+    result["startDate"] = r.get("startDate")
+    result["endDate"] = r.get("endDate")
+    result["notify"] = r.get("notify", True)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tool metadata (for --list / --describe)
+# ---------------------------------------------------------------------------
+
+TOOL_DOCS: dict[str, dict] = {
+    # -- Read tools --
+    "get_accounts": {
+        "desc": "Get all ZenMoney accounts with balances",
+        "params": {"include_archived": "bool (default false) — include archived accounts"},
+    },
+    "get_transactions": {
+        "desc": "Get transactions filtered by date, account, category, type",
+        "params": {
+            "start_date": "str yyyy-MM-dd (required)",
+            "end_date": "str yyyy-MM-dd (default today)",
+            "account_id": "str UUID (optional)",
+            "category_id": "str UUID (optional)",
+            "type": "str expense|income|transfer (optional)",
+            "limit": "int (default 100, max 500)",
+        },
+    },
+    "get_categories": {
+        "desc": "Get all categories (tags) as a tree with parent-child relationships",
+        "params": {},
+    },
+    "get_instruments": {
+        "desc": "Get currencies with IDs, codes, symbols and rates",
+        "params": {"include_all": "bool (default false) — include all, not just used in accounts"},
+    },
+    "get_budgets": {
+        "desc": "Get budgets for a specific month",
+        "params": {"month": "str yyyy-MM (required)"},
+    },
+    "get_reminders": {
+        "desc": "Get scheduled payment reminders with their markers",
+        "params": {
+            "include_processed": "bool (default false)",
+            "active_only": "bool (default true)",
+            "limit": "int (default 50)",
+            "markers_limit": "int (default 5)",
+        },
+    },
+    "get_analytics": {
+        "desc": "Spending/income analytics grouped by category, account, or merchant",
+        "params": {
+            "start_date": "str yyyy-MM-dd (required)",
+            "end_date": "str yyyy-MM-dd (default today)",
+            "group_by": "str category|account|merchant (default category)",
+            "type": "str expense|income|all (default expense)",
+        },
+    },
+    "suggest": {
+        "desc": "ML suggestions for category/merchant by payee name",
+        "params": {"payee": "str (required)"},
+    },
+    "get_merchants": {
+        "desc": "Get merchants, optionally filtered by search query",
+        "params": {"search": "str (optional)", "limit": "int (default 50)"},
+    },
+    "check_auth_status": {
+        "desc": "Check authentication status and token validity",
+        "params": {},
+    },
+    # -- Write tools --
+    "create_transaction": {
+        "desc": "Create a new transaction (expense, income, or transfer)",
+        "params": {
+            "type": "str expense|income|transfer (required)",
+            "amount": "float (required, positive)",
+            "account_id": "str UUID (required)",
+            "to_account_id": "str UUID (required for transfer)",
+            "category_ids": "list[str] UUIDs (optional)",
+            "date": "str yyyy-MM-dd (default today)",
+            "payee": "str (optional)",
+            "comment": "str (optional)",
+            "currency_id": "int (optional, override account currency)",
+            "income_amount": "float (for cross-currency transfers)",
+        },
+    },
+    "update_transaction": {
+        "desc": "Update an existing transaction. Only pass fields to change.",
+        "params": {
+            "id": "str UUID (required)",
+            "amount": "float (optional)",
+            "category_ids": "list[str] UUIDs (optional)",
+            "date": "str yyyy-MM-dd (optional)",
+            "payee": "str (optional)",
+            "comment": "str (optional)",
+        },
+    },
+    "delete_transaction": {
+        "desc": "Soft-delete a transaction",
+        "params": {"id": "str UUID (required)"},
+    },
+    "create_account": {
+        "desc": "Create a new account",
+        "params": {
+            "title": "str (required)",
+            "type": "str cash|ccard|checking (required)",
+            "currency_id": "int (required, instrument ID)",
+            "balance": "float (default 0)",
+            "credit_limit": "float (default 0)",
+        },
+    },
+    "create_budget": {
+        "desc": "Create or update budget for a category in a month",
+        "params": {
+            "month": "str yyyy-MM (required)",
+            "category": "str name or UUID, 'ALL' for aggregate (required)",
+            "income": "float (default 0)",
+            "outcome": "float (default 0)",
+            "income_lock": "bool (default false)",
+            "outcome_lock": "bool (default false)",
+        },
+    },
+    "update_budget": {
+        "desc": "Update existing budget. Only pass fields to change.",
+        "params": {
+            "month": "str yyyy-MM (required)",
+            "category": "str name or UUID (required)",
+            "income": "float (optional)",
+            "outcome": "float (optional)",
+            "income_lock": "bool (optional)",
+            "outcome_lock": "bool (optional)",
+        },
+    },
+    "delete_budget": {
+        "desc": "Delete budget by zeroing income and outcome",
+        "params": {
+            "month": "str yyyy-MM (required)",
+            "category": "str name or UUID (required)",
+        },
+    },
+    "create_reminder": {
+        "desc": "Create a recurring reminder (planned transaction)",
+        "params": {
+            "type": "str expense|income|transfer (required)",
+            "amount": "float (required, positive)",
+            "account_id": "str UUID (required)",
+            "to_account_id": "str UUID (for transfers)",
+            "category_ids": "list[str] UUIDs (optional)",
+            "payee": "str (optional)",
+            "comment": "str (optional)",
+            "interval": "str day|week|month|year (required)",
+            "step": "int (default 1)",
+            "points": "list[int] (optional)",
+            "start_date": "str yyyy-MM-dd (default today)",
+            "end_date": "str yyyy-MM-dd (optional)",
+            "notify": "bool (default true)",
+        },
+    },
+    "update_reminder": {
+        "desc": "Update an existing reminder. Only pass fields to change.",
+        "params": {
+            "id": "str UUID (required)",
+            "amount": "float (optional)",
+            "category_ids": "list[str] UUIDs (optional)",
+            "payee": "str (optional)",
+            "comment": "str (optional)",
+            "interval": "str day|week|month|year (optional)",
+            "step": "int (optional)",
+            "points": "list[int] (optional)",
+            "end_date": "str yyyy-MM-dd (optional)",
+            "notify": "bool (optional)",
+        },
+    },
+    "delete_reminder": {
+        "desc": "Delete a reminder and all its associated markers",
+        "params": {"id": "str UUID (required)"},
+    },
+    "create_reminder_marker": {
+        "desc": "Create a one-time reminder marker for a specific date",
+        "params": {
+            "type": "str expense|income|transfer (required)",
+            "amount": "float (required, positive)",
+            "account_id": "str UUID (required)",
+            "to_account_id": "str UUID (for transfers)",
+            "category_ids": "list[str] UUIDs (optional)",
+            "payee": "str (optional)",
+            "comment": "str (optional)",
+            "date": "str yyyy-MM-dd (required)",
+            "reminder_id": "str UUID (optional, auto-creates one-time reminder if absent)",
+            "notify": "bool (default true)",
+        },
+    },
+    "delete_reminder_marker": {
+        "desc": "Delete a reminder marker",
+        "params": {"id": "str UUID (required)"},
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
+
+def _g(key: str, args: dict, default: Any = None) -> Any:
+    return args.get(key, default)
+
+
+def _find_category_id(name: str) -> str:
+    """Resolve category name or UUID to a category id."""
+    if name.upper() == "ALL":
+        return "00000000-0000-0000-0000-000000000000"
+    if CACHE.get_tag(name):
+        return name
+    for tag in CACHE.tags():
+        if tag["title"].lower() == name.lower():
+            return tag["id"]
+    raise ValueError(f"Category not found: {name}")
+
+
+def _build_tx_spec(
+    tx_type: str,
+    amount: float,
+    account_id: str,
+    to_account_id: str | None,
+    currency_id: int | None,
+    income_amount: float | None,
+) -> dict:
+    """Build incomeAccount/outcomeAccount/income/outcome fields from type."""
+    account = CACHE.get_account(account_id)
+    if not account:
+        raise ValueError(f"Account not found: {account_id}")
+    instrument_id = currency_id if currency_id is not None else account.get("instrument", 0)
+
+    spec: dict[str, Any] = {
+        "incomeInstrument": instrument_id,
+        "incomeAccount": account_id,
+        "income": 0,
+        "outcomeInstrument": instrument_id,
+        "outcomeAccount": account_id,
+        "outcome": 0,
+    }
+
+    if tx_type == "expense":
+        spec["outcome"] = amount
+        spec["outcomeAccount"] = account_id
+        spec["outcomeInstrument"] = instrument_id
+        spec["incomeAccount"] = account_id
+        spec["incomeInstrument"] = instrument_id
+        spec["income"] = 0
+    elif tx_type == "income":
+        spec["income"] = amount
+        spec["incomeAccount"] = account_id
+        spec["incomeInstrument"] = instrument_id
+        spec["outcomeAccount"] = account_id
+        spec["outcomeInstrument"] = instrument_id
+        spec["outcome"] = 0
+    elif tx_type == "transfer":
+        if not to_account_id:
+            raise ValueError("to_account_id is required for transfer type")
+        to_acct = CACHE.get_account(to_account_id)
+        if not to_acct:
+            raise ValueError(f"Destination account not found: {to_account_id}")
+        spec["outcome"] = amount
+        spec["outcomeAccount"] = account_id
+        spec["outcomeInstrument"] = account.get("instrument", 0)
+        spec["incomeAccount"] = to_account_id
+        spec["incomeInstrument"] = to_acct.get("instrument", 0)
+        if account.get("instrument") != to_acct.get("instrument"):
+            if not income_amount:
+                raise ValueError("income_amount is required for cross-currency transfers")
+            spec["income"] = income_amount
+        else:
+            spec["income"] = amount
+    return spec
+
+
+# -- Read tools --
+
+async def tool_get_accounts(args: dict) -> str:
+    include_archived = bool(_g("include_archived", args, False))
+    accounts = CACHE.accounts()
+    if not include_archived:
+        accounts = [a for a in accounts if not a.get("archive")]
+    return json.dumps([_fmt_account(a) for a in accounts], ensure_ascii=False)
+
+
+async def tool_get_transactions(args: dict) -> str:
+    start_date = args["start_date"]
+    _validate_date(start_date, "start_date")
+    end_date = _g("end_date", args) or _today()
+    if _g("end_date", args):
+        _validate_date(end_date, "end_date")
+    account_id = _g("account_id", args)
+    category_id = _g("category_id", args)
+    tx_type = _g("type", args)
+    limit = min(int(_g("limit", args, 100)), 500)
+
+    if account_id:
+        _validate_uuid(account_id, "account_id")
+    if category_id:
+        _validate_uuid(category_id, "category_id")
+
+    txs = [t for t in CACHE.transactions() if not t.get("deleted")]
+    txs = [t for t in txs if t.get("date", "") >= start_date and t.get("date", "") <= end_date]
+
+    if account_id:
+        txs = [t for t in txs if t.get("incomeAccount") == account_id or t.get("outcomeAccount") == account_id]
+    if category_id:
+        txs = [t for t in txs if category_id in (t.get("tag") or [])]
+    if tx_type:
+        txs = [t for t in txs if _tx_type(t) == tx_type]
+
+    txs.sort(key=lambda t: (t.get("date", ""), t.get("created", 0)), reverse=True)
+    total = len(txs)
+    limited = txs[:limit]
+    result: dict[str, Any] = {"transactions": [_fmt_transaction(t) for t in limited]}
+    if total > limit:
+        result["truncated"] = True
+        result["total"] = total
+        result["showing"] = limit
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def tool_get_categories(args: dict) -> str:
+    tags = CACHE.tags()
+    roots = [t for t in tags if not t.get("parent")]
+    children = [t for t in tags if t.get("parent")]
+    tree = []
+    for root in roots:
+        child_list = [{"id": c["id"], "title": c["title"]} for c in children if c.get("parent") == root["id"]]
+        node: dict[str, Any] = {"id": root["id"], "title": root["title"]}
+        if child_list:
+            node["children"] = child_list
+        tree.append(node)
+    return json.dumps(tree, ensure_ascii=False)
+
+
+async def tool_get_instruments(args: dict) -> str:
+    include_all = bool(_g("include_all", args, False))
+    instruments = CACHE.instruments()
+    if not include_all:
+        used_ids = {a.get("instrument") for a in CACHE.accounts()}
+        instruments = [i for i in instruments if i.get("id") in used_ids]
+    formatted = [
+        {"id": i["id"], "code": i.get("shortTitle", ""), "title": i.get("title", ""),
+         "symbol": i.get("symbol", ""), "rate": i.get("rate", 1)}
+        for i in instruments
+    ]
+    return json.dumps(formatted, ensure_ascii=False)
+
+
+async def tool_get_budgets(args: dict) -> str:
+    month = args["month"]
+    _validate_month(month, "month")
+    month_date = f"{month}-01"
+    budgets = [b for b in CACHE.budgets() if b.get("date") == month_date]
+    return json.dumps([_fmt_budget(b) for b in budgets], ensure_ascii=False)
+
+
+async def tool_get_reminders(args: dict) -> str:
+    include_processed = bool(_g("include_processed", args, False))
+    active_only = bool(_g("active_only", args, True))
+    limit = int(_g("limit", args, 50))
+    markers_limit = int(_g("markers_limit", args, 5))
+    today_str = _today()
+
+    reminders = CACHE.reminders()
+    if active_only:
+        reminders = [r for r in reminders if not r.get("endDate") or r["endDate"] >= today_str]
+    reminders.sort(key=lambda r: r.get("startDate", ""), reverse=True)
+    total = len(reminders)
+    eff_limit = min(limit, 200)
+    reminders = reminders[:eff_limit]
+
+    result_list = []
+    for r in reminders:
+        fmt = _fmt_reminder(r)
+        markers = [m for m in CACHE.reminder_markers() if m.get("reminder") == r["id"]]
+        if not include_processed:
+            markers = [m for m in markers if m.get("state") == "planned"]
+        markers.sort(key=lambda m: m.get("date", ""))
+        markers = markers[:markers_limit]
+        if markers:
+            fmt["markers"] = [
+                {"id": m["id"], "date": m.get("date"), "state": m.get("state"),
+                 "income": m.get("income", 0), "outcome": m.get("outcome", 0)}
+                for m in markers
+            ]
+        result_list.append(fmt)
+
+    output: dict[str, Any] = {"reminders": result_list}
+    if total > eff_limit:
+        output["truncated"] = True
+        output["total"] = total
+        output["showing"] = eff_limit
+    return json.dumps(output, ensure_ascii=False)
+
+
+async def tool_get_analytics(args: dict) -> str:
+    start_date = args["start_date"]
+    _validate_date(start_date, "start_date")
+    end_date = _g("end_date", args) or _today()
+    if _g("end_date", args):
+        _validate_date(end_date, "end_date")
+    group_by = _g("group_by", args, "category")
+    an_type = _g("type", args, "expense")
+
+    txs = [t for t in CACHE.transactions() if not t.get("deleted")]
+    txs = [t for t in txs if t.get("date", "") >= start_date and t.get("date", "") <= end_date]
+
+    # Filter by type
+    filtered = []
+    for t in txs:
+        tt = _tx_type(t)
+        if an_type == "expense" and tt == "expense":
+            filtered.append(t)
+        elif an_type == "income" and tt == "income":
+            filtered.append(t)
+        elif an_type == "all" and tt in ("expense", "income"):
+            filtered.append(t)
+
+    # Group
+    groups: dict[str, dict[str, Any]] = {}
+    for tx in filtered:
+        key = "Uncategorized"
+        currency = "RUB"
+
+        if group_by == "category":
+            tag_ids = tx.get("tag") or []
+            if tag_ids:
+                tag = CACHE.get_tag(tag_ids[0])
+                key = tag["title"] if tag else "Uncategorized"
+            acct_id = tx.get("outcomeAccount") if tx.get("outcome", 0) > 0 else tx.get("incomeAccount")
+            acct = CACHE.get_account(acct_id) if acct_id else None
+            instr = CACHE.get_instrument(acct["instrument"]) if acct else None
+            currency = instr["shortTitle"] if instr else "RUB"
+        elif group_by == "account":
+            acct_id = tx.get("incomeAccount") if an_type == "income" else tx.get("outcomeAccount")
+            acct = CACHE.get_account(acct_id) if acct_id else None
+            key = acct["title"] if acct else "Unknown Account"
+            instr = CACHE.get_instrument(acct["instrument"]) if acct else None
+            currency = instr["shortTitle"] if instr else "RUB"
+        elif group_by == "merchant":
+            if tx.get("merchant"):
+                m = CACHE.get_merchant(tx["merchant"])
+                key = m["title"] if m else (tx.get("payee") or "Unknown Merchant")
+            elif tx.get("payee"):
+                key = tx["payee"]
+            acct_id = tx.get("outcomeAccount") if tx.get("outcome", 0) > 0 else tx.get("incomeAccount")
+            acct = CACHE.get_account(acct_id) if acct_id else None
+            instr = CACHE.get_instrument(acct["instrument"]) if acct else None
+            currency = instr["shortTitle"] if instr else "RUB"
+
+        if key not in groups:
+            groups[key] = {"income": 0, "outcome": 0, "count": 0, "currency": currency}
+        g = groups[key]
+        g["income"] += tx.get("income", 0)
+        g["outcome"] += tx.get("outcome", 0)
+        g["count"] += 1
+
+    grand_total = 0.0
+    for g in groups.values():
+        if an_type == "expense":
+            grand_total += g["outcome"]
+        elif an_type == "income":
+            grand_total += g["income"]
+        else:
+            grand_total += g["income"] + g["outcome"]
+
+    groups_list = []
+    for name, data in groups.items():
+        total_val = data["outcome"] if an_type == "expense" else data["income"] if an_type == "income" else data["income"] + data["outcome"]
+        entry: dict[str, Any] = {"name": name, "total": total_val, "count": data["count"], "currency": data["currency"]}
+        if an_type == "all":
+            entry["income"] = data["income"]
+            entry["outcome"] = data["outcome"]
+        groups_list.append(entry)
+    groups_list.sort(key=lambda x: x["total"], reverse=True)
+
+    return json.dumps({
+        "period": {"from": start_date, "to": end_date},
+        "type": an_type,
+        "groupBy": group_by,
+        "grandTotal": grand_total,
+        "transactionCount": len(filtered),
+        "groups": groups_list,
+    }, ensure_ascii=False)
+
+
+async def tool_suggest(args: dict) -> str:
+    payee = args["payee"]
+    result = await _api_post("/v8/suggest/", {"payee": payee})
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def tool_get_merchants(args: dict) -> str:
+    search = _g("search", args)
+    limit = int(_g("limit", args, 50))
+    merchants = CACHE.merchants()
+    if search:
+        q = search.lower()
+        merchants = [m for m in merchants if q in m.get("title", "").lower()]
+    total = len(merchants)
+    eff_limit = min(limit, 200)
+    limited = merchants[:eff_limit]
+    formatted = [{"id": m["id"], "title": m["title"]} for m in limited]
+    result: dict[str, Any] = {"merchants": formatted}
+    if total > eff_limit:
+        result["truncated"] = True
+        result["total"] = total
+        result["showing"] = eff_limit
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def tool_check_auth_status(args: dict) -> str:
+    try:
+        await _sync()
+        return json.dumps({"status": "authenticated", "message": "Token is valid and working"}, ensure_ascii=False)
+    except Exception as e:
+        msg = str(e)
+        return json.dumps({
+            "status": "error",
+            "error": msg,
+            "solution": (
+                "Token expired. Get a new token from https://budgera.com/settings/export"
+                if "401" in msg or "expired" in msg.lower()
+                else "Check your credentials or network connection"
+            ),
+        }, ensure_ascii=False)
+
+
+# -- Write tools --
+
+async def tool_create_transaction(args: dict) -> str:
+    tx_type = args["type"]
+    amount = float(args["amount"])
+    account_id = args["account_id"]
+    to_account_id = _g("to_account_id", args)
+    category_ids = _g("category_ids", args)
+    date = _g("date", args) or _today()
+    payee = _g("payee", args)
+    comment = _g("comment", args)
+    currency_id = _g("currency_id", args)
+    income_amount = _g("income_amount", args)
+
+    _validate_uuid(account_id, "account_id")
+    if to_account_id:
+        _validate_uuid(to_account_id, "to_account_id")
+    if category_ids:
+        for i, cid in enumerate(category_ids):
+            _validate_uuid(cid, f"category_ids[{i}]")
+    if _g("date", args):
+        _validate_date(date, "date")
+    if currency_id is not None:
+        currency_id = int(currency_id)
+    if income_amount is not None:
+        income_amount = float(income_amount)
+
+    spec = _build_tx_spec(tx_type, amount, account_id, to_account_id, currency_id, income_amount)
+
+    user = CACHE.first_user()
+    if not user:
+        raise ValueError("No user found in cache")
+    now = _now_ts()
+
+    tx: dict[str, Any] = {
+        "id": _new_uuid(),
+        "user": user["id"],
+        "changed": now,
+        "created": now,
+        "deleted": False,
+        "hold": None,
+        **spec,
+        "tag": category_ids if category_ids else None,
+        "merchant": None,
+        "payee": payee,
+        "originalPayee": None,
+        "comment": comment,
+        "date": date,
+        "mcc": None,
+        "reminderMarker": None,
+        "opIncome": None,
+        "opIncomeInstrument": None,
+        "opOutcome": None,
+        "opOutcomeInstrument": None,
+        "latitude": None,
+        "longitude": None,
+        "qrCode": None,
+        "incomeBankID": None,
+        "outcomeBankID": None,
+    }
+
+    await _write_diff({"transaction": [tx]})
+    created = CACHE.get("transaction", tx["id"]) or tx
+    return json.dumps({"created": _fmt_transaction(created)}, ensure_ascii=False)
+
+
+async def tool_update_transaction(args: dict) -> str:
+    tid = args["id"]
+    _validate_uuid(tid, "id")
+    if _g("date", args):
+        _validate_date(args["date"], "date")
+    if _g("category_ids", args):
+        for i, cid in enumerate(args["category_ids"]):
+            _validate_uuid(cid, f"category_ids[{i}]")
+
+    existing = CACHE.get("transaction", tid)
+    if not existing:
+        raise ValueError(f"Transaction not found: {tid}")
+
+    updated = {**existing, "changed": _now_ts()}
+    amount = _g("amount", args)
+    if amount is not None:
+        amount = float(amount)
+        tt = _tx_type(existing)
+        if tt == "transfer":
+            if existing.get("outcomeInstrument") != existing.get("incomeInstrument"):
+                raise ValueError("Cannot update amount on cross-currency transfers. Delete and recreate.")
+            updated["outcome"] = amount
+            updated["income"] = amount
+        elif existing.get("outcome", 0) > 0:
+            updated["outcome"] = amount
+        else:
+            updated["income"] = amount
+
+    if "category_ids" in args:
+        updated["tag"] = args["category_ids"]
+    if "date" in args:
+        updated["date"] = args["date"]
+    if "payee" in args:
+        updated["payee"] = args["payee"]
+    if "comment" in args:
+        updated["comment"] = args["comment"]
+
+    await _write_diff({"transaction": [updated]})
+    result = CACHE.get("transaction", tid) or updated
+    return json.dumps({"updated": _fmt_transaction(result)}, ensure_ascii=False)
+
+
+async def tool_delete_transaction(args: dict) -> str:
+    tid = args["id"]
+    _validate_uuid(tid, "id")
+
+    existing = CACHE.get("transaction", tid)
+    if not existing:
+        raise ValueError(f"Transaction not found: {tid}")
+
+    deleted = {**existing, "deleted": True, "changed": _now_ts()}
+    await _write_diff({"transaction": [deleted]})
+    return json.dumps({
+        "deleted": True, "id": tid,
+        "date": existing.get("date"),
+        "amount": existing.get("outcome") or existing.get("income"),
+    }, ensure_ascii=False)
+
+
+async def tool_create_account(args: dict) -> str:
+    title = args["title"]
+    acct_type = args["type"]
+    currency_id = int(args["currency_id"])
+    balance = float(_g("balance", args, 0))
+    credit_limit = float(_g("credit_limit", args, 0))
+
+    if not CACHE.get_instrument(currency_id):
+        raise ValueError(f"Unknown currency_id: {currency_id}. Use get_instruments to see available currencies.")
+
+    user = CACHE.first_user()
+    if not user:
+        raise ValueError("No user found in cache")
+    now = _now_ts()
+
+    new_account: dict[str, Any] = {
+        "id": _new_uuid(),
+        "user": user["id"],
+        "instrument": currency_id,
+        "type": acct_type,
+        "role": None,
+        "company": None,
+        "title": title,
+        "syncID": None,
+        "balance": balance,
+        "startBalance": balance,
+        "creditLimit": credit_limit,
+        "inBalance": True,
+        "savings": False,
+        "enableCorrection": False,
+        "enableSMS": False,
+        "archive": False,
+        "private": False,
+        "capitalization": None,
+        "percent": None,
+        "startDate": None,
+        "endDateOffset": None,
+        "endDateOffsetInterval": None,
+        "payoffStep": None,
+        "payoffInterval": None,
+        "changed": now,
+    }
+
+    await _write_diff({"account": [new_account]})
+    created = CACHE.get_account(new_account["id"]) or new_account
+    return json.dumps({"created": _fmt_account(created)}, ensure_ascii=False)
+
+
+async def tool_create_budget(args: dict) -> str:
+    month = args["month"]
+    _validate_month(month, "month")
+    category = args["category"]
+    income = float(_g("income", args, 0))
+    outcome = float(_g("outcome", args, 0))
+    income_lock = bool(_g("income_lock", args, False))
+    outcome_lock = bool(_g("outcome_lock", args, False))
+
+    _validate_positive(income, "income")
+    _validate_positive(outcome, "outcome")
+
+    category_id = _find_category_id(category)
+    month_date = f"{month}-01"
+
+    user = CACHE.first_user()
+    if not user:
+        # fallback: get user from any account
+        accts = CACHE.accounts()
+        if not accts:
+            raise ValueError("No accounts found. Cannot determine user ID.")
+        user = {"id": accts[0].get("user")}
+
+    budget: dict[str, Any] = {
+        "user": user["id"],
+        "changed": _now_ts(),
+        "tag": None if category_id == "00000000-0000-0000-0000-000000000000" else category_id,
+        "date": month_date,
+        "income": income,
+        "incomeLock": income_lock,
+        "outcome": outcome,
+        "outcomeLock": outcome_lock,
+    }
+
+    await _write_diff({"budget": [budget]})
+    cat_name = "ALL (aggregate)" if category_id == "00000000-0000-0000-0000-000000000000" else (
+        (CACHE.get_tag(category_id) or {}).get("title", category)
+    )
+    return json.dumps({
+        "success": True,
+        "budget": {
+            "month": month, "category": cat_name, "category_id": category_id,
+            "income": income, "outcome": outcome,
+            "income_lock": income_lock, "outcome_lock": outcome_lock,
+        },
+    }, ensure_ascii=False)
+
+
+async def tool_update_budget(args: dict) -> str:
+    month = args["month"]
+    _validate_month(month, "month")
+    category = args["category"]
+
+    category_id = _find_category_id(category)
+    month_date = f"{month}-01"
+    budget_key = f"{'null' if category_id == '00000000-0000-0000-0000-000000000000' else category_id}:{month_date}"
+
+    existing = CACHE.data["budget"].get(budget_key)
+    if not existing:
+        raise ValueError(f'Budget not found for category "{category}" in {month}. Use create_budget to create.')
+
+    updated = {**existing, "changed": _now_ts()}
+    if "income" in args:
+        _validate_positive(float(args["income"]), "income")
+        updated["income"] = float(args["income"])
+    if "outcome" in args:
+        _validate_positive(float(args["outcome"]), "outcome")
+        updated["outcome"] = float(args["outcome"])
+    if "income_lock" in args:
+        updated["incomeLock"] = bool(args["income_lock"])
+    if "outcome_lock" in args:
+        updated["outcomeLock"] = bool(args["outcome_lock"])
+
+    await _write_diff({"budget": [updated]})
+    cat_name = "ALL (aggregate)" if category_id == "00000000-0000-0000-0000-000000000000" else (
+        (CACHE.get_tag(category_id) or {}).get("title", category)
+    )
+    return json.dumps({
+        "success": True, "message": "Budget updated",
+        "budget": {
+            "month": month, "category": cat_name,
+            "income": updated["income"], "outcome": updated["outcome"],
+            "income_lock": updated.get("incomeLock", False),
+            "outcome_lock": updated.get("outcomeLock", False),
+        },
+    }, ensure_ascii=False)
+
+
+async def tool_delete_budget(args: dict) -> str:
+    month = args["month"]
+    _validate_month(month, "month")
+    category = args["category"]
+
+    category_id = _find_category_id(category)
+    month_date = f"{month}-01"
+    budget_key = f"{'null' if category_id == '00000000-0000-0000-0000-000000000000' else category_id}:{month_date}"
+
+    existing = CACHE.data["budget"].get(budget_key)
+    if not existing:
+        raise ValueError(f'Budget not found for category "{category}" in {month}.')
+
+    deleted = {**existing, "changed": _now_ts(), "income": 0, "outcome": 0}
+    await _write_diff({"budget": [deleted]})
+    cat_name = "ALL (aggregate)" if category_id == "00000000-0000-0000-0000-000000000000" else (
+        (CACHE.get_tag(category_id) or {}).get("title", category)
+    )
+    return json.dumps({"success": True, "message": "Budget deleted", "category": cat_name, "month": month}, ensure_ascii=False)
+
+
+async def tool_create_reminder(args: dict) -> str:
+    tx_type = args["type"]
+    amount = float(args["amount"])
+    account_id = args["account_id"]
+    to_account_id = _g("to_account_id", args)
+    category_ids = _g("category_ids", args)
+    payee = _g("payee", args)
+    comment = _g("comment", args)
+    interval = args["interval"]
+    step = int(_g("step", args, 1))
+    points = _g("points", args)
+    start_date = _g("start_date", args) or _today()
+    end_date = _g("end_date", args)
+    notify = bool(_g("notify", args, True))
+
+    _validate_uuid(account_id, "account_id")
+    if to_account_id:
+        _validate_uuid(to_account_id, "to_account_id")
+    if category_ids:
+        for cid in category_ids:
+            _validate_uuid(cid, "category_id")
+    _validate_positive(amount, "amount")
+    if _g("start_date", args):
+        _validate_date(start_date, "start_date")
+    if end_date:
+        _validate_date(end_date, "end_date")
+    if tx_type == "transfer" and not to_account_id:
+        raise ValueError("to_account_id is required for transfer type")
+
+    account = CACHE.get_account(account_id)
+    if not account:
+        raise ValueError(f"Account not found: {account_id}")
+    to_acct = CACHE.get_account(to_account_id) if to_account_id else None
+    if to_account_id and not to_acct:
+        raise ValueError(f"Destination account not found: {to_account_id}")
+
+    # Validate categories
+    if category_ids:
+        for cid in category_ids:
+            if not CACHE.get_tag(cid):
+                raise ValueError(f"Category not found: {cid}")
+
+    user_id = account.get("user")
+    now = _now_ts()
+
+    reminder: dict[str, Any] = {
+        "id": _new_uuid(),
+        "user": user_id,
+        "changed": now,
+        "incomeInstrument": account["instrument"] if tx_type == "income" else (to_acct["instrument"] if to_acct else account["instrument"]),
+        "incomeAccount": account_id if tx_type == "income" else (to_account_id or account_id),
+        "income": 0 if tx_type == "expense" else amount,
+        "outcomeInstrument": account["instrument"] if tx_type != "income" else account["instrument"],
+        "outcomeAccount": account_id if tx_type != "income" else account_id,
+        "outcome": 0 if tx_type == "income" else amount,
+        "tag": category_ids if category_ids else None,
+        "merchant": None,
+        "payee": payee,
+        "comment": comment,
+        "interval": interval,
+        "step": step,
+        "points": points if points else [],
+        "startDate": start_date,
+        "endDate": end_date,
+        "notify": notify,
+    }
+
+    await _write_diff({"reminder": [reminder]})
+    return json.dumps({
+        "success": True,
+        "reminder": {
+            "id": reminder["id"], "type": tx_type, "amount": amount,
+            "account": account.get("title"),
+            "to_account": to_acct.get("title") if to_acct else None,
+            "recurrence": f"Every {str(step) + ' ' if step > 1 else ''}{interval}{'s' if step > 1 else ''}",
+            "start_date": start_date,
+            "end_date": end_date or "indefinite",
+            "points": points or "all",
+        },
+    }, ensure_ascii=False)
+
+
+async def tool_update_reminder(args: dict) -> str:
+    rid = args["id"]
+    _validate_uuid(rid, "id")
+    if _g("amount", args):
+        _validate_positive(float(args["amount"]), "amount")
+    if _g("category_ids", args):
+        for cid in args["category_ids"]:
+            _validate_uuid(cid, "category_id")
+    if _g("end_date", args):
+        _validate_date(args["end_date"], "end_date")
+
+    existing = CACHE.get("reminder", rid)
+    if not existing:
+        raise ValueError(f"Reminder not found: {rid}")
+
+    if _g("category_ids", args):
+        for cid in args["category_ids"]:
+            if not CACHE.get_tag(cid):
+                raise ValueError(f"Category not found: {cid}")
+
+    updated = {**existing, "changed": _now_ts()}
+
+    if "amount" in args:
+        amount = float(args["amount"])
+        is_income = existing.get("income", 0) > 0 and existing.get("outcome", 0) == 0
+        is_expense = existing.get("outcome", 0) > 0 and existing.get("income", 0) == 0
+        if is_income:
+            updated["income"] = amount
+        elif is_expense:
+            updated["outcome"] = amount
+        else:
+            updated["income"] = amount
+            updated["outcome"] = amount
+
+    if "category_ids" in args:
+        updated["tag"] = args["category_ids"]
+    if "payee" in args:
+        updated["payee"] = args["payee"]
+    if "comment" in args:
+        updated["comment"] = args["comment"]
+    if "interval" in args:
+        updated["interval"] = args["interval"]
+    if "step" in args:
+        updated["step"] = int(args["step"])
+    if "points" in args:
+        updated["points"] = args["points"]
+    if "end_date" in args:
+        updated["endDate"] = args["end_date"]
+    if "notify" in args:
+        updated["notify"] = bool(args["notify"])
+
+    await _write_diff({"reminder": [updated]})
+    return json.dumps({"success": True, "message": "Reminder updated", "id": rid}, ensure_ascii=False)
+
+
+async def tool_delete_reminder(args: dict) -> str:
+    rid = args["id"]
+    _validate_uuid(rid, "id")
+
+    existing = CACHE.get("reminder", rid)
+    if not existing:
+        raise ValueError(f"Reminder not found: {rid}")
+
+    now = _now_ts()
+    deletions: list[dict] = [{"id": rid, "object": "reminder", "stamp": now, "user": existing["user"]}]
+
+    for m in CACHE.reminder_markers():
+        if m.get("reminder") == rid:
+            deletions.append({"id": m["id"], "object": "reminderMarker", "stamp": now, "user": m["user"]})
+
+    await _write_diff({"deletion": deletions})
+    return json.dumps({
+        "success": True,
+        "message": f"Reminder deleted with {len(deletions) - 1} associated markers",
+        "id": rid,
+    }, ensure_ascii=False)
+
+
+async def tool_create_reminder_marker(args: dict) -> str:
+    tx_type = args["type"]
+    amount = float(args["amount"])
+    account_id = args["account_id"]
+    to_account_id = _g("to_account_id", args)
+    category_ids = _g("category_ids", args)
+    payee = _g("payee", args)
+    comment = _g("comment", args)
+    date = args["date"]
+    reminder_id = _g("reminder_id", args)
+    notify = bool(_g("notify", args, True))
+
+    _validate_uuid(account_id, "account_id")
+    if to_account_id:
+        _validate_uuid(to_account_id, "to_account_id")
+    if category_ids:
+        for cid in category_ids:
+            _validate_uuid(cid, "category_id")
+    if reminder_id:
+        _validate_uuid(reminder_id, "reminder_id")
+    _validate_date(date, "date")
+    _validate_positive(amount, "amount")
+    if tx_type == "transfer" and not to_account_id:
+        raise ValueError("to_account_id is required for transfer type")
+
+    account = CACHE.get_account(account_id)
+    if not account:
+        raise ValueError(f"Account not found: {account_id}")
+    to_acct = CACHE.get_account(to_account_id) if to_account_id else None
+    if to_account_id and not to_acct:
+        raise ValueError(f"Destination account not found: {to_account_id}")
+    if category_ids:
+        for cid in category_ids:
+            if not CACHE.get_tag(cid):
+                raise ValueError(f"Category not found: {cid}")
+
+    user_id = account.get("user")
+    now = _now_ts()
+
+    # If no reminder_id, create a one-time Reminder
+    effective_reminder_id = reminder_id
+    auto_created = False
+    if not effective_reminder_id:
+        one_time: dict[str, Any] = {
+            "id": _new_uuid(),
+            "user": user_id,
+            "changed": now,
+            "incomeInstrument": account["instrument"] if tx_type == "income" else (to_acct["instrument"] if to_acct else account["instrument"]),
+            "incomeAccount": account_id if tx_type == "income" else (to_account_id or account_id),
+            "income": 0 if tx_type == "expense" else amount,
+            "outcomeInstrument": account["instrument"],
+            "outcomeAccount": account_id if tx_type != "income" else account_id,
+            "outcome": 0 if tx_type == "income" else amount,
+            "tag": category_ids if category_ids else None,
+            "merchant": None,
+            "payee": payee,
+            "comment": comment,
+            "interval": None,
+            "step": None,
+            "points": None,
+            "startDate": date,
+            "endDate": date,
+            "notify": notify,
+        }
+        await _write_diff({"reminder": [one_time]})
+        effective_reminder_id = one_time["id"]
+        auto_created = True
+    else:
+        if not CACHE.get("reminder", effective_reminder_id):
+            raise ValueError(f"Reminder not found: {effective_reminder_id}")
+
+    marker: dict[str, Any] = {
+        "id": _new_uuid(),
+        "user": user_id,
+        "changed": now,
+        "incomeInstrument": account["instrument"] if tx_type == "income" else (to_acct["instrument"] if to_acct else account["instrument"]),
+        "incomeAccount": account_id if tx_type == "income" else (to_account_id or account_id),
+        "income": 0 if tx_type == "expense" else amount,
+        "outcomeInstrument": account["instrument"],
+        "outcomeAccount": account_id if tx_type != "income" else account_id,
+        "outcome": 0 if tx_type == "income" else amount,
+        "tag": category_ids if category_ids else None,
+        "merchant": None,
+        "payee": payee,
+        "comment": comment,
+        "date": date,
+        "reminder": effective_reminder_id,
+        "state": "planned",
+        "notify": notify,
+    }
+
+    await _write_diff({"reminderMarker": [marker]})
+    return json.dumps({
+        "success": True,
+        "reminder_marker": {
+            "id": marker["id"], "type": tx_type, "amount": amount,
+            "account": account.get("title"),
+            "to_account": to_acct.get("title") if to_acct else None,
+            "date": date, "state": "planned",
+            "reminder_id": effective_reminder_id,
+            "auto_created_reminder": auto_created,
+        },
+    }, ensure_ascii=False)
+
+
+async def tool_delete_reminder_marker(args: dict) -> str:
+    mid = args["id"]
+    _validate_uuid(mid, "id")
+
+    marker = CACHE.get("reminderMarker", mid)
+    if not marker:
+        raise ValueError(f"ReminderMarker not found: {mid}")
+
+    await _write_diff({
+        "deletion": [{"id": mid, "object": "reminderMarker", "stamp": _now_ts(), "user": marker["user"]}],
+    })
+    return json.dumps({"success": True, "message": "ReminderMarker deleted", "id": mid}, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Dispatch table
+# ---------------------------------------------------------------------------
+
+HANDLERS: dict[str, Any] = {
+    "get_accounts": tool_get_accounts,
+    "get_transactions": tool_get_transactions,
+    "get_categories": tool_get_categories,
+    "get_instruments": tool_get_instruments,
+    "get_budgets": tool_get_budgets,
+    "get_reminders": tool_get_reminders,
+    "get_analytics": tool_get_analytics,
+    "suggest": tool_suggest,
+    "get_merchants": tool_get_merchants,
+    "check_auth_status": tool_check_auth_status,
+    "create_transaction": tool_create_transaction,
+    "update_transaction": tool_update_transaction,
+    "delete_transaction": tool_delete_transaction,
+    "create_account": tool_create_account,
+    "create_budget": tool_create_budget,
+    "update_budget": tool_update_budget,
+    "delete_budget": tool_delete_budget,
+    "create_reminder": tool_create_reminder,
+    "update_reminder": tool_update_reminder,
+    "delete_reminder": tool_delete_reminder,
+    "create_reminder_marker": tool_create_reminder_marker,
+    "delete_reminder_marker": tool_delete_reminder_marker,
+}
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+async def _run_tool(name: str, args: dict) -> str:
+    CACHE.load()
+    await _sync()
+    try:
+        handler = HANDLERS.get(name)
+        if not handler:
+            return json.dumps({"error": f"Unknown tool: {name}. Use --list to see available tools."})
+        return await handler(args)
+    finally:
+        await _close_client()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ZenMoney CLI executor")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--list", action="store_true", help="List all tools")
+    group.add_argument("--describe", type=str, metavar="TOOL", help="Describe a tool")
+    group.add_argument("--call", type=str, metavar="JSON", help='Call: {"tool":"name","arguments":{...}}')
+    parsed = parser.parse_args()
+
+    if parsed.list:
+        tools = [{"name": n, "description": d["desc"]} for n, d in TOOL_DOCS.items()]
+        print(json.dumps(tools, ensure_ascii=False, indent=2))
+        return
+
+    if parsed.describe:
+        doc = TOOL_DOCS.get(parsed.describe)
+        if not doc:
+            print(json.dumps({"error": f"Unknown tool: {parsed.describe}"}), file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(
+            {"name": parsed.describe, "description": doc["desc"], "parameters": doc["params"]},
+            ensure_ascii=False, indent=2,
+        ))
+        return
+
+    if parsed.call:
+        if not TOKEN:
+            print(json.dumps({"error": "ZENMONEY_TOKEN not set. Set env var or add to config.json"}), file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            payload = json.loads(parsed.call)
+        except json.JSONDecodeError as e:
+            print(json.dumps({"error": f"Invalid JSON: {e}"}), file=sys.stderr)
+            sys.exit(1)
+
+        tool_name = payload.get("tool", "")
+        arguments = payload.get("arguments", {})
+
+        if tool_name not in TOOL_DOCS:
+            print(json.dumps({"error": f"Unknown tool: {tool_name}. Use --list to see available tools."}), file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            result = asyncio.run(_run_tool(tool_name, arguments))
+            print(result)
+        except Exception as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
