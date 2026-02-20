@@ -12,3 +12,5 @@ skill/
 temp_*.json
 *_token.json
 *token*.json
+references/*.json
+!references/*.example.json
