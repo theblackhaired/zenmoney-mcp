@@ -396,6 +396,11 @@ def classify_transfer(item: dict, mode_config: dict) -> tuple[str, float] | None
 
     amount = item.get("amount", 0)
 
+    # Transfers between two inBalance accounts are balance-neutral
+    # (money stays within the balance perimeter)
+    if from_in_balance and to_in_balance:
+        return None
+
     # --- Expense checks (outflows) ---
 
     # 1. Transfer TO credit account (debt repayment)
@@ -434,12 +439,12 @@ def classify_transfer(item: dict, mode_config: dict) -> tuple[str, float] | None
 
     # 7. Generic off-balance outflow (from inBalance to off-balance)
     if expense_cfg.get("to_other_off_balance", False):
-        if count_all or (from_in_balance and not to_in_balance):
+        if from_in_balance and not to_in_balance:
             return ("expense", amount)
 
     # 8. Generic off-balance inflow (from off-balance to inBalance)
     if income_cfg.get("from_other_off_balance", False):
-        if count_all or (not from_in_balance and to_in_balance):
+        if not from_in_balance and to_in_balance:
             return ("income", amount)
 
     # 9. No balance impact
@@ -1155,6 +1160,95 @@ async def tool_rebuild_references(args: dict) -> str:
     }, ensure_ascii=False)
 
 
+def calculate_initial_balance(data: dict, period_start_date: str) -> float:
+    """
+    Calculate total inBalance account balances at period start.
+
+    Formula: balance_at_start = current_balance - sum(transactions_after_start)
+
+    Args:
+        data: Full ZenMoney data (account, transaction, instrument)
+        period_start_date: Period start date in YYYY-MM-DD format
+
+    Returns:
+        Total balance in RUB at period start for all inBalance accounts
+    """
+    try:
+        return _calculate_initial_balance_impl(data, period_start_date)
+    except Exception as e:
+        import traceback
+        raise RuntimeError(f"Error in calculate_initial_balance: {e}\n{traceback.format_exc()}")
+
+
+def _calculate_initial_balance_impl(data: dict, period_start_date: str) -> float:
+    """Implementation of initial balance calculation."""
+    from datetime import datetime
+    import time
+
+    # Get all inBalance accounts (non-archived)
+    in_balance_accounts = [
+        acc for acc in data.get("account", [])
+        if acc.get("inBalance") and not acc.get("archive")
+    ]
+
+    # Get all transactions
+    transactions = data.get("transaction", [])
+
+    # Parse period_start_date to timestamp using mktime (Windows-compatible)
+    period_start_dt = datetime.strptime(period_start_date, "%Y-%m-%d")
+    period_start_ts = time.mktime(period_start_dt.timetuple())
+
+    # Build instrument map for currency conversion
+    instruments = {i["id"]: i for i in data.get("instrument", [])}
+
+    total_balance_rub = 0.0
+
+    for acc in in_balance_accounts:
+        current_balance = acc.get("balance", 0)
+        currency_id = acc.get("instrument")
+        acc_id = acc["id"]
+
+        # Sum all balance changes after period_start for this account
+        delta = 0.0
+        for tx in transactions:
+            tx_date = tx.get("date")
+            if not tx_date:
+                continue
+
+            # CACHE transactions always have Unix timestamp (numeric)
+            # Skip non-numeric dates (should not happen, but be safe)
+            if not isinstance(tx_date, (int, float)):
+                continue
+
+            tx_ts = float(tx_date)
+
+            if tx_ts < period_start_ts:
+                continue
+
+            # If income to this account
+            if tx.get("incomeAccount") == acc_id:
+                delta += tx.get("income", 0)
+
+            # If outcome from this account
+            if tx.get("outcomeAccount") == acc_id:
+                delta -= tx.get("outcome", 0)
+
+        # Balance at period start = current_balance - delta
+        balance_at_start = current_balance - delta
+
+        # Convert to RUB if needed
+        if currency_id and currency_id != "RUB":
+            instrument = instruments.get(currency_id, {})
+            rate = instrument.get("rate", 1)
+            balance_at_start_rub = balance_at_start * rate
+        else:
+            balance_at_start_rub = balance_at_start
+
+        total_balance_rub += balance_at_start_rub
+
+    return total_balance_rub
+
+
 async def tool_analyze_budget_detailed(args: dict) -> str:
     """Detailed budget analysis with income vs expenses by category."""
 
@@ -1600,16 +1694,16 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
             by_parent[parent_id].append(cat_data)
 
         def aggregate_sums(node: dict, children: list[dict]) -> None:
-            """Recursively aggregate sums from children to parent."""
+            """Recursively aggregate sums from children to parent, preserving parent's own values."""
             if is_expense:
                 # For expenses: actual, planned_from_reminders, budget
-                node["actual"] = sum(child["actual"] for child in children)
-                node["planned_from_reminders"] = sum(child["planned_from_reminders"] for child in children)
-                node["budget"] = sum(child["budget"] for child in children)
+                node["actual"] += sum(child["actual"] for child in children)
+                node["planned_from_reminders"] += sum(child["planned_from_reminders"] for child in children)
+                node["budget"] += sum(child["budget"] for child in children)
             else:
                 # For income: actual, planned
-                node["actual"] = sum(child["actual"] for child in children)
-                node["planned"] = sum(child["planned"] for child in children)
+                node["actual"] += sum(child["actual"] for child in children)
+                node["planned"] += sum(child["planned"] for child in children)
 
         def build_node(cat_data: dict) -> dict:
             """Recursively build tree node."""
@@ -1694,12 +1788,31 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
     total_income_actual = sum(c["actual"] for c in income_tree)
     total_income_planned = sum(c["planned"] for c in income_tree)
 
-    # For expenses, use max(actual + planned_from_reminders, budget) for each category
+    # For expenses, use max(actual + planned_from_reminders, budget) for each leaf category
     # This prevents double-counting when actual spending is within budget
-    total_expense_expected = sum(
-        max(c["actual"] + c["planned_from_reminders"], c["budget"])
-        for c in expense_tree
-    )
+    def sum_leaf_expected(nodes):
+        """Recursively sum max(actual+planned, budget) for leaf nodes only."""
+        total = 0
+        for node in nodes:
+            if node.get("children"):
+                total += sum_leaf_expected(node["children"])
+            else:
+                total += max(node["actual"] + node["planned_from_reminders"], node["budget"])
+        return total
+
+    total_expense_expected = sum_leaf_expected(expense_tree)
+
+    # Recursively sum actual expenses from all leaf nodes
+    def sum_actual_recursive(nodes):
+        total = 0
+        for node in nodes:
+            if node.get("children"):
+                total += sum_actual_recursive(node["children"])
+            else:
+                total += node.get("actual", 0)
+        return total
+
+    total_expense_actual = sum_actual_recursive(expense_tree)
 
     # Calculate transfer totals using mode-aware classify_transfer
     total_transfers_out = 0
@@ -1736,12 +1849,47 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
                 "net": total_transfers_net,
                 "description": "Net transfers based on account types (credit, savings, debt) and inBalance flags",
             },
-            "balance": int((total_income_actual + total_income_planned) - total_expense_expected - total_transfers_net) if config.get("round_balance_to_integer", True) else (total_income_actual + total_income_planned) - total_expense_expected - total_transfers_net,
-        },
-        "income": sorted(income_tree, key=lambda x: x["actual"] + x["planned"], reverse=True),
-        "expenses": sorted(expense_tree, key=lambda x: max(x["actual"] + x["planned_from_reminders"], x["budget"]), reverse=True),
-        "transfers": sorted(transfer_items, key=lambda x: x["date"]),
+        }
     }
+
+    # Calculate balance based on mode
+    count_all_movements = mode_config.get("count_all_movements", False)
+
+    if count_all_movements:
+        # Balance vs Expense mode: use initial balance + actual values only
+        # Build data dict from CACHE for initial balance calculation
+        cached_data = {
+            "account": list(CACHE.accounts()),
+            "transaction": list(CACHE.transactions()),
+            "instrument": list(CACHE.instruments())
+        }
+        initial_balance = calculate_initial_balance(cached_data, start_date)
+        balance_raw = initial_balance + total_income_actual + total_transfers_in - total_expense_actual - total_transfers_out
+    else:
+        # Income vs Expense mode: use planned/expected values
+        balance_raw = (total_income_actual + total_income_planned) - total_expense_expected - total_transfers_net
+
+    result["summary"]["balance"] = (
+        int(balance_raw)
+        if config.get("round_balance_to_integer", True)
+        else balance_raw
+    )
+
+    # Add debug info for balance_vs_expense mode
+    if count_all_movements:
+        result["summary"]["debug"] = {
+            "initial_balance": initial_balance,
+            "total_income_actual": total_income_actual,
+            "total_expense_actual": total_expense_actual,
+            "total_transfers_in": total_transfers_in,
+            "total_transfers_out": total_transfers_out,
+            "formula": f"{initial_balance} + {total_income_actual} + {total_transfers_in} - {total_expense_actual} - {total_transfers_out} = {balance_raw}"
+        }
+
+    # Add income, expenses, transfers to result
+    result["income"] = sorted(income_tree, key=lambda x: x["actual"] + x["planned"], reverse=True)
+    result["expenses"] = sorted(expense_tree, key=lambda x: max(x["actual"] + x["planned_from_reminders"], x["budget"]), reverse=True)
+    result["transfers"] = sorted(transfer_items, key=lambda x: x["date"])
 
     # Helper to recursively collect items from tree
     def collect_items_from_tree(nodes: list[dict], item_type: str) -> list[dict]:

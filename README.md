@@ -75,17 +75,21 @@ Or set environment variable `ZENMONEY_TOKEN`.
 
 The `analyze_budget_detailed` tool supports two budget analysis modes:
 
-**Balance vs Expense** (`balance_vs_expense`)
-- Analyzes budget by comparing account balances with spending
-- Includes all money movements, including transfers between accounts
-- Useful for understanding true cash position and budget impact
-- Shows how budgets affect overall balance
-
-**Income vs Expense** (`income_vs_expense`)
+**✅ Income vs Expense** (`income_vs_expense`) — **RECOMMENDED**
 - Analyzes budget by comparing income with spending only
 - Excludes account transfers and internal movements
 - Focuses on actual money earned vs spent
 - Useful for understanding spending patterns relative to income
+- **Status**: Fully tested, exact match with ZenMoney ✅
+
+**⚠️ Balance vs Expense** (`balance_vs_expense`) — **EXPERIMENTAL**
+- Analyzes budget by comparing account balances with spending
+- Includes all money movements, including transfers between accounts
+- Calculates initial balance automatically with currency conversion
+- Shows how budgets affect overall balance
+- **Status**: Implemented but has data interpretation issues (~85k discrepancy with ZenMoney)
+- **Known issue**: Shows only actual expenses (completed transactions), may not match ZenMoney's planned expense handling
+- **Not recommended for production use**
 
 Switch between modes using `setup_budget_mode` tool or configure in `config.json` with `budget_mode` parameter.
 
