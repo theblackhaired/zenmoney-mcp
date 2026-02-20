@@ -470,6 +470,17 @@ TOOL_DOCS: dict[str, dict] = {
         "desc": "Rebuild reference cache files (accounts.json, categories.json) from ZenMoney data. Run after account/category changes.",
         "params": {},
     },
+    "analyze_budget_detailed": {
+        "desc": "Detailed budget analysis with income vs expenses breakdown by category, plan vs fact comparison, payment calendar, and balance forecast",
+        "params": {
+            "start_date": "str yyyy-MM-dd (optional, auto-calculated from billing_period_start_day if not provided)",
+            "end_date": "str yyyy-MM-dd (optional, auto-calculated from billing_period_start_day if not provided)",
+            "include_off_balance": "bool (default false) — include accounts with inBalance=false",
+            "group_by": "str category|date (default category)",
+            "show_forecast": "bool (default true) — show daily balance forecast",
+            "show_calendar": "bool (default true) — show payment calendar",
+        },
+    },
     "get_analytics": {
         "desc": "Spending/income analytics grouped by category, account, or merchant",
         "params": {
@@ -964,6 +975,7 @@ async def tool_rebuild_references(args: dict) -> str:
         if pid:
             children_map.setdefault(pid, []).append(t)
 
+    # Build hierarchical structure with parent_id in children
     categories_out = []
     for p in sorted(parents, key=lambda t: t.get("title", "")):
         kids = children_map.get(p["id"], [])
@@ -971,17 +983,40 @@ async def tool_rebuild_references(args: dict) -> str:
             "id": p["id"],
             "title": p.get("title", ""),
             "children": [
-                {"id": c["id"], "title": c.get("title", "")}
+                {"id": c["id"], "title": c.get("title", ""), "parent_id": p["id"]}
                 for c in sorted(kids, key=lambda c: c.get("title", ""))
             ],
         }
         categories_out.append(cat)
+
+    # Build flat index for fast lookup
+    index = {}
+    for p in parents:
+        index[p["id"]] = {
+            "title": p.get("title", ""),
+            "parent_id": None,
+            "parent_title": None,
+            "is_parent": True,
+            "children_count": len(children_map.get(p["id"], [])),
+        }
+
+    for t in tags:
+        if t.get("parent"):
+            parent = next((p for p in parents if p["id"] == t["parent"]), None)
+            index[t["id"]] = {
+                "title": t.get("title", ""),
+                "parent_id": t["parent"],
+                "parent_title": parent.get("title", "") if parent else None,
+                "is_parent": False,
+                "children_count": 0,
+            }
 
     categories_data = {
         "generated": _today(),
         "total": len(tags),
         "parents": len(parents),
         "categories": categories_out,
+        "index": index,
     }
     (REFS_DIR / "categories.json").write_text(
         json.dumps(categories_data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -991,9 +1026,555 @@ async def tool_rebuild_references(args: dict) -> str:
         "status": "ok",
         "generated": _today(),
         "accounts": f"{len(accounts_out)} accounts ({accounts_data['active']} active, {accounts_data['in_balance']} in balance)",
-        "categories": f"{len(tags)} categories ({len(parents)} parent, {len(tags) - len(parents)} child)",
+        "categories": f"{len(tags)} categories ({len(parents)} parent, {len(tags) - len(parents)} child, {len(index)} indexed)",
         "files": ["references/accounts.json", "references/categories.json"],
+        "features": ["parent_id in children", "flat index for fast lookup"],
     }, ensure_ascii=False)
+
+
+async def tool_analyze_budget_detailed(args: dict) -> str:
+    """Detailed budget analysis with income vs expenses by category."""
+
+    # Load category index from references
+    cat_index_path = REFS_DIR / "categories.json"
+    cat_index = {}
+    if cat_index_path.exists():
+        try:
+            cat_data = json.loads(cat_index_path.read_text(encoding="utf-8"))
+            cat_index = cat_data.get("index", {})
+        except Exception:
+            pass
+
+    # Load accounts reference
+    accounts_ref_path = REFS_DIR / "accounts.json"
+    accounts_map = {}
+    if accounts_ref_path.exists():
+        try:
+            acc_data = json.loads(accounts_ref_path.read_text(encoding="utf-8"))
+            accounts_map = {a["id"]: a for a in acc_data.get("accounts", [])}
+        except Exception:
+            pass
+
+    # Determine period from billing_period_start_day or use provided dates
+    include_off_balance = _g("include_off_balance", args, False)
+    show_forecast = _g("show_forecast", args, True)
+    show_calendar = _g("show_calendar", args, True)
+
+    # Calculate period dates
+    if _g("start_date", args):
+        start_date = args["start_date"]
+        _validate_date(start_date, "start_date")
+        end_date = _g("end_date", args) or _today()
+        if _g("end_date", args):
+            _validate_date(end_date, "end_date")
+    else:
+        # Auto-calculate from billing_period_start_day
+        cfg_path = ROOT / "config.json"
+        billing_start_day = 1
+        if cfg_path.exists():
+            try:
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                billing_start_day = cfg.get("billing_period_start_day", 1)
+            except Exception:
+                pass
+
+        today = datetime.date.today()
+        if today.day >= billing_start_day:
+            start_date = datetime.date(today.year, today.month, billing_start_day).isoformat()
+            next_month = today.replace(day=28) + datetime.timedelta(days=4)
+            next_month = next_month.replace(day=1)
+            end_date = (next_month.replace(day=billing_start_day) - datetime.timedelta(days=1)).isoformat()
+        else:
+            prev_month = (today.replace(day=1) - datetime.timedelta(days=1))
+            start_date = datetime.date(prev_month.year, prev_month.month, billing_start_day).isoformat()
+            end_date = datetime.date(today.year, today.month, billing_start_day - 1).isoformat()
+
+    # Helper to enrich category with metadata
+    def enrich_category(cat_id: str) -> dict:
+        if not cat_id or cat_id not in cat_index:
+            return {
+                "category_id": cat_id or "uncategorized",
+                "category_name": "Без категории",
+                "parent_id": None,
+                "parent_name": None,
+                "is_parent": False,
+            }
+        meta = cat_index[cat_id]
+        return {
+            "category_id": cat_id,
+            "category_name": meta.get("title", "Unknown"),
+            "parent_id": meta.get("parent_id"),
+            "parent_name": meta.get("parent_title"),
+            "is_parent": meta.get("is_parent", False),
+        }
+
+    # Get actual transactions
+    txs = [t for t in CACHE.transactions() if not t.get("deleted")]
+    txs = [t for t in txs if t.get("date", "") >= start_date and t.get("date", "") <= end_date]
+
+    # Get reminders with markers
+    reminders_income = []
+    reminders_expense = []
+    reminders_transfer = []
+
+    for r in (CACHE.reminders() or []):
+        if r.get("deleted"):
+            continue
+        markers = [m for m in (CACHE.reminder_markers() or [])
+                  if m.get("reminder") == r["id"]
+                  and not m.get("deleted")
+                  and start_date <= m.get("date", "") <= end_date]
+        if not markers:
+            continue
+
+        # Determine type
+        if r.get("income", 0) > 0 and r.get("outcome", 0) == 0:
+            rtype = "income"
+        elif r.get("outcome", 0) > 0 and r.get("income", 0) == 0:
+            rtype = "expense"
+        else:
+            rtype = "transfer"
+
+        reminder_data = {
+            "id": r["id"],
+            "payee": r.get("payee"),
+            "comment": r.get("comment"),
+            "categories": [CACHE.get_tag(tid)["title"] if CACHE.get_tag(tid) else None for tid in (r.get("tag") or [])],
+            "category_ids": r.get("tag") or [],
+            "account_id": r.get("outcomeAccount") if rtype == "expense" else r.get("incomeAccount"),
+            "from_account_id": r.get("outcomeAccount") if rtype == "transfer" else None,
+            "to_account_id": r.get("incomeAccount") if rtype == "transfer" else None,
+            "type": rtype,
+            "markers": [
+                {
+                    "date": m.get("date"),
+                    "income": m.get("income", 0),
+                    "outcome": m.get("outcome", 0),
+                    "state": m.get("state", "planned"),
+                }
+                for m in markers
+            ],
+            "total_income": sum(m.get("income", 0) for m in markers),
+            "total_outcome": sum(m.get("outcome", 0) for m in markers),
+        }
+
+        if rtype == "income":
+            reminders_income.append(reminder_data)
+        elif rtype == "expense":
+            reminders_expense.append(reminder_data)
+        else:
+            reminders_transfer.append(reminder_data)
+
+    # Get budgets
+    month = start_date[:7]  # yyyy-MM
+    # Get fresh budgets from API instead of cache
+    budgets_raw = json.loads(await tool_get_budgets({"month": month}))
+    budgets_map = {}
+    for b in budgets_raw:
+        cat_name = b.get("category")
+        if cat_name:
+            budgets_map[cat_name] = {
+                "income": b.get("income", 0),
+                "outcome": b.get("outcome", 0),
+            }
+
+    # Process income
+    income_by_category: dict[str, dict] = {}
+    for tx in txs:
+        tt = _tx_type(tx)
+        if tt != "income":
+            continue
+
+        # Check if account is in balance
+        acct_id = tx.get("incomeAccount")
+        if not include_off_balance:
+            acct = accounts_map.get(acct_id, {})
+            if not acct.get("inBalance", False):
+                continue
+
+        cat_ids = tx.get("tag", [])
+        cat_id = cat_ids[0] if cat_ids else None
+        cat_meta = enrich_category(cat_id)
+        cat_key = cat_meta["category_id"]
+
+        if cat_key not in income_by_category:
+            income_by_category[cat_key] = {
+                **cat_meta,
+                "actual": 0,
+                "planned": 0,
+                "items": [],
+            }
+
+        income_by_category[cat_key]["actual"] += tx.get("income", 0)
+        income_by_category[cat_key]["items"].append({
+            "date": tx.get("date"),
+            "payee": tx.get("payee"),
+            "amount": tx.get("income", 0),
+            "comment": tx.get("comment"),
+            "status": "completed",
+        })
+
+    # Add planned income from reminders
+    for rem in reminders_income:
+        cat_ids = rem.get("category_ids", [])
+        cat_id = cat_ids[0] if cat_ids else None
+        cat_meta = enrich_category(cat_id)
+        cat_key = cat_meta["category_id"]
+
+        # Check account
+        if not include_off_balance:
+            acct = accounts_map.get(rem.get("account_id"), {})
+            if not acct.get("inBalance", False):
+                continue
+
+        if cat_key not in income_by_category:
+            income_by_category[cat_key] = {
+                **cat_meta,
+                "actual": 0,
+                "planned": 0,
+                "items": [],
+            }
+
+        income_by_category[cat_key]["planned"] += sum(m["income"] for m in rem["markers"] if m.get("state") != "processed")
+        for marker in rem["markers"]:
+            if marker.get("state") == "processed":
+                continue
+            income_by_category[cat_key]["items"].append({
+                "date": marker["date"],
+                "payee": rem.get("payee"),
+                "amount": marker["income"],
+                "comment": rem.get("comment"),
+                "status": marker.get("state", "planned"),
+            })
+
+    # Process expenses
+    expense_by_category: dict[str, dict] = {}
+    for tx in txs:
+        tt = _tx_type(tx)
+        if tt != "expense":
+            continue
+
+        # Check if account is in balance
+        acct_id = tx.get("outcomeAccount")
+        if not include_off_balance:
+            acct = accounts_map.get(acct_id, {})
+            if not acct.get("inBalance", False):
+                continue
+
+        cat_ids = tx.get("tag", [])
+        cat_id = cat_ids[0] if cat_ids else None
+        cat_meta = enrich_category(cat_id)
+        cat_key = cat_meta["category_id"]
+
+        if cat_key not in expense_by_category:
+            expense_by_category[cat_key] = {
+                **cat_meta,
+                "actual": 0,
+                "planned_from_reminders": 0,
+                "budget": 0,
+                "items": [],
+            }
+
+        expense_by_category[cat_key]["actual"] += tx.get("outcome", 0)
+        expense_by_category[cat_key]["items"].append({
+            "date": tx.get("date"),
+            "payee": tx.get("payee"),
+            "amount": tx.get("outcome", 0),
+            "comment": tx.get("comment"),
+            "status": "completed",
+        })
+
+    # Add planned expenses from reminders
+    for rem in reminders_expense:
+        cat_ids = rem.get("category_ids", [])
+        cat_id = cat_ids[0] if cat_ids else None
+        cat_meta = enrich_category(cat_id)
+        cat_key = cat_meta["category_id"]
+
+        # Check account
+        if not include_off_balance:
+            acct = accounts_map.get(rem.get("account_id"), {})
+            if not acct.get("inBalance", False):
+                continue
+
+        if cat_key not in expense_by_category:
+            expense_by_category[cat_key] = {
+                **cat_meta,
+                "actual": 0,
+                "planned_from_reminders": 0,
+                "budget": 0,
+                "items": [],
+            }
+
+        expense_by_category[cat_key]["planned_from_reminders"] += sum(m["outcome"] for m in rem["markers"] if m.get("state") != "processed")
+        for marker in rem["markers"]:
+            if marker.get("state") == "processed":
+                continue
+            expense_by_category[cat_key]["items"].append({
+                "date": marker["date"],
+                "payee": rem.get("payee"),
+                "amount": marker["outcome"],
+                "comment": rem.get("comment"),
+                "status": marker.get("state", "planned"),
+            })
+
+    # Add budget data
+    for cat_key, cat_data in expense_by_category.items():
+        cat_name = cat_data["category_name"]
+        if cat_name in budgets_map:
+            cat_data["budget"] = budgets_map[cat_name]["outcome"]
+
+    # Add budget-only categories (categories with budget but no reminders/transactions)
+    for cat_name, budget_data in budgets_map.items():
+        if budget_data["outcome"] == 0:
+            continue
+
+        # Find category in expense_by_category
+        found = False
+        for cat_key, cat_data in expense_by_category.items():
+            if cat_data["category_name"] == cat_name:
+                found = True
+                break
+
+        # If not found, create new expense category
+        if not found:
+            # Find category UUID from cache
+            cat_obj = None
+            for c in (CACHE.tags() or []):
+                if c.get("title") == cat_name:
+                    cat_obj = c
+                    break
+
+            if cat_obj:
+                cat_meta = enrich_category(cat_obj["id"])
+                cat_key = cat_meta["category_id"]
+
+                expense_by_category[cat_key] = {
+                    **cat_meta,
+                    "actual": 0,
+                    "planned_from_reminders": 0,
+                    "budget": budget_data["outcome"],
+                    "items": [],
+                }
+
+    # Process transfers
+    transfer_items = []
+
+    # Add actual transfers from transactions
+    for tx in txs:
+        tt = _tx_type(tx)
+        if tt != "transfer":
+            continue
+
+        from_acct_id = tx.get("outcomeAccount")
+        to_acct_id = tx.get("incomeAccount")
+
+        # Check if this affects inBalance accounts
+        from_acct = accounts_map.get(from_acct_id, {})
+        to_acct = accounts_map.get(to_acct_id, {})
+
+        from_in_balance = from_acct.get("inBalance", False)
+        to_in_balance = to_acct.get("inBalance", False)
+
+        # Skip if both are off-balance and we're not including off-balance
+        if not include_off_balance and not from_in_balance and not to_in_balance:
+            continue
+
+        # Transfer affects balance if:
+        # - From inBalance to off-balance (outflow)
+        # - From off-balance to inBalance (inflow) - only if include_off_balance
+        # - Between inBalance accounts (no net effect on total balance, but show in calendar)
+
+        transfer_items.append({
+            "date": tx.get("date"),
+            "from_account": from_acct.get("title", "Unknown"),
+            "to_account": to_acct.get("title", "Unknown"),
+            "amount": tx.get("outcome", 0),
+            "comment": tx.get("comment"),
+            "status": "completed",
+            "from_in_balance": from_in_balance,
+            "to_in_balance": to_in_balance,
+        })
+
+    # Add planned transfers from reminders
+    for rem in reminders_transfer:
+        from_acct_id = rem.get("from_account_id")
+        to_acct_id = rem.get("to_account_id")
+
+        from_acct = accounts_map.get(from_acct_id, {})
+        to_acct = accounts_map.get(to_acct_id, {})
+
+        from_in_balance = from_acct.get("inBalance", False)
+        to_in_balance = to_acct.get("inBalance", False)
+
+        if not include_off_balance and not from_in_balance and not to_in_balance:
+            continue
+
+        for marker in rem["markers"]:
+            if marker.get("state") == "processed":
+                continue
+
+            transfer_items.append({
+                "date": marker["date"],
+                "from_account": from_acct.get("title", "Unknown"),
+                "to_account": to_acct.get("title", "Unknown"),
+                "amount": marker["outcome"],
+                "comment": rem.get("comment"),
+                "status": marker.get("state", "planned"),
+                "from_in_balance": from_in_balance,
+                "to_in_balance": to_in_balance,
+                "to_account_subtype": to_acct.get("subtype"),
+            })
+
+    # Calculate totals
+    total_income_actual = sum(c["actual"] for c in income_by_category.values())
+    total_income_planned = sum(c["planned"] for c in income_by_category.values())
+    total_expense_actual = sum(c["actual"] for c in expense_by_category.values())
+    total_expense_planned = sum(c["planned_from_reminders"] + c["budget"] for c in expense_by_category.values())
+
+    # Calculate transfer totals (only credit card payments and installments)
+    # Only count transfers from inBalance to credit accounts (subtype == "credit")
+    # AND with comments containing "погашение", "рассрочка", or "кредит" (case-insensitive)
+    # This excludes transfers to debit off-balance accounts like HML.APP
+    # and initial installment payments without these keywords
+    def is_credit_payment(item):
+        if not (item["from_in_balance"] and not item["to_in_balance"] and item.get("to_account_subtype") == "credit"):
+            return False
+        comment = (item.get("comment") or "").lower()
+        return any(kw in comment for kw in ["погашение", "рассрочка", "кредит"])
+
+    total_transfers = sum(
+        item["amount"]
+        for item in transfer_items
+        if is_credit_payment(item)
+    )
+
+    # Build output
+    result = {
+        "summary": {
+            "period": {"start": start_date, "end": end_date},
+            "income": {
+                "actual": total_income_actual,
+                "planned": total_income_planned,
+                "total": total_income_actual + total_income_planned,
+            },
+            "expense": {
+                "actual": total_expense_actual,
+                "planned": total_expense_planned,
+                "total": total_expense_actual + total_expense_planned,
+            },
+            "transfers": {
+                "total": total_transfers,
+                "description": "Transfers from inBalance to off-balance accounts (e.g., credit card payments)",
+            },
+            "balance": (total_income_actual + total_income_planned) - (total_expense_actual + total_expense_planned) - total_transfers,
+        },
+        "income": sorted(income_by_category.values(), key=lambda x: x["actual"] + x["planned"], reverse=True),
+        "expenses": sorted(expense_by_category.values(), key=lambda x: x["actual"] + x["planned_from_reminders"] + x["budget"], reverse=True),
+        "transfers": sorted(transfer_items, key=lambda x: x["date"]),
+    }
+
+    # Add calendar if requested
+    if show_calendar:
+        calendar = []
+        # Add all items from income and expenses
+        for cat in income_by_category.values():
+            for item in cat["items"]:
+                calendar.append({
+                    "date": item["date"],
+                    "type": "income",
+                    "category": cat["category_name"],
+                    "payee": item["payee"],
+                    "amount": item["amount"],
+                    "status": item["status"],
+                })
+        for cat in expense_by_category.values():
+            for item in cat["items"]:
+                calendar.append({
+                    "date": item["date"],
+                    "type": "expense",
+                    "category": cat["category_name"],
+                    "payee": item["payee"],
+                    "amount": item["amount"],
+                    "status": item["status"],
+                })
+        # Add transfers
+        for item in transfer_items:
+            calendar.append({
+                "date": item["date"],
+                "type": "transfer",
+                "from_account": item["from_account"],
+                "to_account": item["to_account"],
+                "amount": item["amount"],
+                "comment": item["comment"],
+                "status": item["status"],
+                "from_in_balance": item["from_in_balance"],
+                "to_in_balance": item["to_in_balance"],
+            })
+        calendar.sort(key=lambda x: x["date"])
+        result["calendar"] = calendar
+
+    # Add forecast if requested
+    if show_forecast:
+        # Get current balance
+        current_balance = sum(
+            a.get("balance", 0)
+            for a in accounts_map.values()
+            if include_off_balance or a.get("inBalance", False)
+        )
+
+        # Build daily forecast
+        forecast = []
+        balance = current_balance
+
+        # Group calendar by date
+        from collections import defaultdict
+        daily_ops: dict[str, list] = defaultdict(list)
+        if show_calendar and "calendar" in result:
+            for op in result["calendar"]:
+                daily_ops[op["date"]].append(op)
+
+        current_date = datetime.date.fromisoformat(start_date)
+        end_date_obj = datetime.date.fromisoformat(end_date)
+
+        while current_date <= end_date_obj:
+            date_str = current_date.isoformat()
+            ops = daily_ops.get(date_str, [])
+
+            for op in ops:
+                if op["type"] == "income":
+                    balance += op["amount"]
+                elif op["type"] == "expense":
+                    balance -= op["amount"]
+                elif op["type"] == "transfer":
+                    # Transfer impact on balance depends on account types:
+                    # - inBalance → off-balance: decreases balance
+                    # - off-balance → inBalance: increases balance
+                    # - inBalance → inBalance: no net effect (both sides counted)
+                    # - off-balance → off-balance: no effect
+                    from_in = op.get("from_in_balance", False)
+                    to_in = op.get("to_in_balance", False)
+
+                    if from_in and not to_in:
+                        # Outflow from tracked balance
+                        balance -= op["amount"]
+                    elif not from_in and to_in:
+                        # Inflow to tracked balance (only if include_off_balance)
+                        balance += op["amount"]
+                    # else: both in or both out = no net change to tracked balance
+
+            if ops:  # Only add to forecast if there were operations
+                forecast.append({
+                    "date": date_str,
+                    "balance": round(balance, 2),
+                    "operations_count": len(ops),
+                })
+
+            current_date += datetime.timedelta(days=1)
+
+        result["forecast"] = forecast
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 async def tool_get_analytics(args: dict) -> str:
@@ -1704,6 +2285,7 @@ HANDLERS: dict[str, Any] = {
     "get_budgets": tool_get_budgets,
     "get_reminders": tool_get_reminders,
     "rebuild_references": tool_rebuild_references,
+    "analyze_budget_detailed": tool_analyze_budget_detailed,
     "get_analytics": tool_get_analytics,
     "suggest": tool_suggest,
     "get_merchants": tool_get_merchants,
