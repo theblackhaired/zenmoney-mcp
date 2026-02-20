@@ -1629,7 +1629,7 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
                 "net": total_transfers_net,
                 "description": "Net transfers based on account types (credit, savings, debt) and inBalance flags",
             },
-            "balance": (total_income_actual + total_income_planned) - total_expense_expected - total_transfers_net,
+            "balance": int((total_income_actual + total_income_planned) - total_expense_expected - total_transfers_net) if config.get("round_balance_to_integer", True) else (total_income_actual + total_income_planned) - total_expense_expected - total_transfers_net,
         },
         "income": sorted(income_by_category.values(), key=lambda x: x["actual"] + x["planned"], reverse=True),
         "expenses": sorted(expense_by_category.values(), key=lambda x: max(x["actual"] + x["planned_from_reminders"], x["budget"]), reverse=True),
@@ -1728,7 +1728,7 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
             if ops:  # Only add to forecast if there were operations
                 forecast.append({
                     "date": date_str,
-                    "balance": round(balance, 2),
+                    "balance": int(balance) if config.get("round_balance_to_integer", True) else round(balance, 2),
                     "operations_count": len(ops),
                 })
 

@@ -121,6 +121,10 @@ else:
     marker_to = today.year-today.month-(start_day - 1)
 ```
 
+**Округление баланса:**
+- `round_balance_to_integer` (boolean, по умолчанию true) — округлять итоговый баланс и прогноз до целых рублей
+- Используется для совпадения с отображением в ZenMoney приложении
+
 ## User Profile
 
 Before performing budgets, reminders, or financial planning — read `PROFILE.md` in skill directory.
@@ -139,7 +143,15 @@ It contains: billing period rule (20th–19th), account UUIDs, category UUIDs, f
 python3 scripts/cli.py --call '{"tool":"rebuild_references","arguments":{}}'
 ```
 
-### 3. Заполни описания счетов (account_meta.json)
+### 3. Выбери режим работы с планами (бюджетом)
+- При первом запуске `analyze_budget_detailed` система предложит выбрать режим работы
+- Доступно 2 режима (аналогично настройкам ZenMoney → Планы → Настройки → Режим работы):
+  - **"Баланс vs Расходы"** (`balance_vs_expense`) — учитывает все движения денег, включая счета вне баланса
+  - **"Доходы vs Расходы"** (`income_vs_expense`) — исключает лишние переводы, фокус на реальных доходах/расходах
+- Выбери подходящий режим — он сохранится в `config.json` → `budget_mode_configured: true`
+- Изменить режим позже можно через `setup_budget_mode(mode="...")`
+
+### 4. Заполни описания счетов (account_meta.json)
 - Прочитай `references/accounts.json` — список всех счетов
 - Для каждого активного счёта (`archived: false`) определи назначение:
   - По названию и банку (если очевидно)
@@ -149,7 +161,7 @@ python3 scripts/cli.py --call '{"tool":"rebuild_references","arguments":{}}'
 - Запиши в `references/account_meta.json`
 - Перезапусти `rebuild_references()` для мержа описаний в `accounts.json`
 
-### 4. Проверь PROFILE.md
+### 5. Проверь PROFILE.md
 - Если `skill/PROFILE.md` не существует — создай по шаблону `skill/PROFILE.example.md`
 - Заполни на основе данных из справочников и вопросов пользователю
 
@@ -234,6 +246,23 @@ python3 scripts/cli.py --call '{"tool":"get_reminders","arguments":{"marker_from
 - Интервалы напоминаний: day, week, month, year
 
 ## CHANGELOG
+
+### 2026-02-20 - Interactive Budget Mode Setup & Legacy Cleanup
+
+**Интерактивная настройка режима:**
+- Добавлен новый tool `setup_budget_mode(mode)` для выбора режима работы с бюджетом
+- При первом запуске `analyze_budget_detailed` система предлагает выбрать режим (аналогично ZenMoney → Планы → Настройки → Режим работы)
+- Флаг `budget_mode_configured` в config.json отслеживает статус настройки
+- После выбора режима флаг устанавливается в `true` и больше не беспокоит пользователя
+- Изменить режим позже можно через `setup_budget_mode` или напрямую в config.json
+
+**Legacy код удалён:**
+- Полностью удалён устаревший параметр `include_off_balance` из `analyze_budget_detailed`
+- Вся логика теперь управляется через систему режимов (`budget_mode` + `mode_config`)
+- Флаг `count_all_movements` из конфигурации режима заменяет `include_off_balance`
+
+**Режим по умолчанию:**
+- Изменён на `balance_vs_expense` (Баланс vs Расходы) — учитывает все движения денег
 
 ### 2026-02-20 - Configurable Budget Modes System
 
