@@ -1690,15 +1690,15 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
     income_tree = build_category_tree(income_by_category, is_expense=False)
     expense_tree = build_category_tree(expense_by_category, is_expense=True)
 
-    # Calculate totals
-    total_income_actual = sum(c["actual"] for c in income_by_category.values())
-    total_income_planned = sum(c["planned"] for c in income_by_category.values())
+    # Calculate totals from tree roots (already aggregated)
+    total_income_actual = sum(c["actual"] for c in income_tree)
+    total_income_planned = sum(c["planned"] for c in income_tree)
 
     # For expenses, use max(actual + planned_from_reminders, budget) for each category
     # This prevents double-counting when actual spending is within budget
     total_expense_expected = sum(
         max(c["actual"] + c["planned_from_reminders"], c["budget"])
-        for c in expense_by_category.values()
+        for c in expense_tree
     )
 
     # Calculate transfer totals using mode-aware classify_transfer
