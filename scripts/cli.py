@@ -507,6 +507,7 @@ def _fmt_budget(b: dict) -> dict:
 
     result = {
         "category": tag["title"] if tag else ("Total" if b.get("tag") is None else b.get("tag")),
+        "category_id": b.get("tag"),  # Add UUID category
         "month": b.get("date", ""),
         "income": b.get("income", 0),
         "incomeLock": b.get("incomeLock", False),
@@ -1425,11 +1426,12 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
     budgets_raw = json.loads(await tool_get_budgets({"month": month}))
     budgets_map = {}
     for b in budgets_raw:
-        cat_name = b.get("category")
-        if cat_name:
-            budgets_map[cat_name] = {
+        cat_id = b.get("category_id")
+        if cat_id:
+            budgets_map[cat_id] = {
                 "income": b.get("income", 0),
                 "outcome": b.get("outcome", 0),
+                "category_name": b.get("category"),  # Save name for debugging
             }
 
     # Process income
@@ -1574,28 +1576,26 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
 
     # Add budget data
     for cat_key, cat_data in expense_by_category.items():
-        cat_name = cat_data["category_name"]
-        if cat_name in budgets_map:
-            cat_data["budget"] = budgets_map[cat_name]["outcome"]
+        if cat_key in budgets_map:
+            cat_data["budget"] = budgets_map[cat_key]["outcome"]
 
     # Add budget-only categories (categories with budget but no reminders/transactions)
-    for cat_name, budget_data in budgets_map.items():
+    for cat_id, budget_data in budgets_map.items():
         if budget_data["outcome"] == 0:
             continue
 
-        # Find category in expense_by_category
-        found = False
-        for cat_key, cat_data in expense_by_category.items():
-            if cat_data["category_name"] == cat_name:
-                found = True
-                break
+        # Check if this category already exists in expense_by_category
+        if cat_id in expense_by_category:
+            found = True
+        else:
+            found = False
 
         # If not found, create new expense category
         if not found:
-            # Find category UUID from cache
+            # Find category by UUID in cache
             cat_obj = None
             for c in (CACHE.tags() or []):
-                if c.get("title") == cat_name:
+                if c.get("id") == cat_id:
                     cat_obj = c
                     break
 
@@ -1797,19 +1797,43 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
     total_income_actual = sum(c["actual"] for c in income_tree)
     total_income_planned = sum(c["planned"] for c in income_tree)
 
-    # For expenses, use max(actual + planned_from_reminders, budget) for each leaf category
-    # This prevents double-counting when actual spending is within budget
-    def sum_leaf_expected(nodes):
-        """Recursively sum max(actual+planned, budget) for leaf nodes only."""
+    # For expenses, calculate: budget, actual, planned, remaining (ZenMoney logic)
+    def sum_leaf_budgets(nodes):
+        """Recursively sum budgets for leaf nodes only."""
         total = 0
         for node in nodes:
             if node.get("children"):
-                total += sum_leaf_expected(node["children"])
+                total += sum_leaf_budgets(node["children"])
             else:
-                total += max(node["actual"] + node["planned_from_reminders"], node["budget"])
+                total += node.get("budget", 0)
         return total
 
-    total_expense_expected = sum_leaf_expected(expense_tree)
+    def sum_leaf_planned(nodes):
+        """Recursively sum planned_from_reminders for leaf nodes only."""
+        total = 0
+        for node in nodes:
+            if node.get("children"):
+                total += sum_leaf_planned(node["children"])
+            else:
+                total += node.get("planned_from_reminders", 0)
+        return total
+
+    def sum_leaf_for_balance(nodes):
+        """Recursively sum max(actual+planned, budget) for leaf nodes - used for balance calculation."""
+        total = 0
+        for node in nodes:
+            if node.get("children"):
+                total += sum_leaf_for_balance(node["children"])
+            else:
+                actual = node.get("actual", 0)
+                planned = node.get("planned_from_reminders", 0)
+                budget = node.get("budget", 0)
+                total += max(actual + planned, budget)
+        return total
+
+    total_expense_budget = sum_leaf_budgets(expense_tree)
+    total_expense_planned = sum_leaf_planned(expense_tree)
+    total_expense_for_balance = sum_leaf_for_balance(expense_tree)
 
     # Recursively sum actual expenses from all leaf nodes
     def sum_actual_recursive(nodes):
@@ -1822,6 +1846,8 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
         return total
 
     total_expense_actual = sum_actual_recursive(expense_tree)
+    total_expense_remaining = total_expense_budget - total_expense_actual
+    total_expense_expected = total_expense_actual + total_expense_planned
 
     # Calculate transfer totals using mode-aware classify_transfer
     total_transfers_out = 0
@@ -1849,8 +1875,13 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
                 "total": total_income_actual + total_income_planned,
             },
             "expense": {
-                "expected": total_expense_expected,
-                "description": "max(actual + planned_from_reminders, budget) per category",
+                "budget": total_expense_budget,
+                "actual": total_expense_actual,
+                "planned": total_expense_planned,
+                "remaining": total_expense_remaining,
+                "expected_total": total_expense_expected,
+                "for_balance": total_expense_for_balance,
+                "description": "remaining = budget - actual (UI view). for_balance = sum(max(actual+planned, budget)) per leaf (ZenMoney Plans balance)."
             },
             "transfers": {
                 "out": total_transfers_out,
@@ -1876,7 +1907,7 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
         balance_raw = initial_balance + total_income_actual + total_transfers_in - total_expense_actual - total_transfers_out
     else:
         # Income vs Expense mode: use planned/expected values
-        balance_raw = (total_income_actual + total_income_planned) - total_expense_expected - total_transfers_net
+        balance_raw = (total_income_actual + total_income_planned) - total_expense_for_balance - total_transfers_net
 
     result["summary"]["balance"] = (
         int(balance_raw)
