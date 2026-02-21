@@ -1809,31 +1809,40 @@ async def tool_analyze_budget_detailed(args: dict) -> str:
 
     # For expenses, calculate: budget, actual, planned, remaining (ZenMoney logic)
     def sum_leaf_budgets(nodes):
-        """Recursively sum budgets for leaf nodes only."""
+        """Recursively sum budgets, using max(parent_budget, children_sum) for parent nodes."""
         total = 0
         for node in nodes:
             if node.get("children"):
-                total += sum_leaf_budgets(node["children"])
+                children_sum = sum_leaf_budgets(node["children"])
+                parent_budget = node.get("budget", 0)
+                total += max(parent_budget, children_sum)
             else:
                 total += node.get("budget", 0)
         return total
 
     def sum_leaf_planned(nodes):
-        """Recursively sum planned_from_reminders for leaf nodes only."""
+        """Recursively sum planned_from_reminders, using max(parent_planned, children_sum) for parent nodes."""
         total = 0
         for node in nodes:
             if node.get("children"):
-                total += sum_leaf_planned(node["children"])
+                children_sum = sum_leaf_planned(node["children"])
+                parent_planned = node.get("planned_from_reminders", 0)
+                total += max(parent_planned, children_sum)
             else:
                 total += node.get("planned_from_reminders", 0)
         return total
 
     def sum_leaf_for_balance(nodes):
-        """Recursively sum max(actual+planned, budget) for leaf nodes - used for balance calculation."""
+        """Recursively sum max(actual+planned, budget), using max(parent_value, children_sum) for parent nodes."""
         total = 0
         for node in nodes:
             if node.get("children"):
-                total += sum_leaf_for_balance(node["children"])
+                children_sum = sum_leaf_for_balance(node["children"])
+                parent_actual = node.get("actual", 0)
+                parent_planned = node.get("planned_from_reminders", 0)
+                parent_budget = node.get("budget", 0)
+                parent_value = max(parent_actual + parent_planned, parent_budget)
+                total += max(parent_value, children_sum)
             else:
                 actual = node.get("actual", 0)
                 planned = node.get("planned_from_reminders", 0)
